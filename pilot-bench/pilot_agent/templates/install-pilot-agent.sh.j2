@@ -1,0 +1,90 @@
+#!/bin/bash
+set -e
+
+echo "=== Pilot Agent: Installing Claude Code ==="
+
+# Detect OS
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="$ID"
+else
+    OS_ID="unknown"
+fi
+
+echo "Detected OS: $OS_ID"
+
+# Install Node.js if not present
+if ! command -v node &> /dev/null; then
+    echo "Installing Node.js..."
+    case "$OS_ID" in
+        alpine)
+            apk add --no-cache nodejs npm
+            ;;
+        ubuntu|debian)
+            apt-get update -qq && apt-get install -y -qq nodejs npm
+            ;;
+        fedora|rhel|centos)
+            dnf install -y nodejs npm 2>/dev/null || yum install -y nodejs npm
+            ;;
+        *)
+            # Fallback: try curl + nvm
+            if command -v curl &> /dev/null; then
+                curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm
+            else
+                echo "ERROR: Cannot install Node.js — no package manager found"
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
+echo "Node version: $(node --version)"
+echo "npm version: $(npm --version)"
+
+# Install Claude Code CLI globally
+echo "Installing Claude Code CLI..."
+npm install -g @anthropic-ai/claude-code@latest 2>&1
+
+# Verify installation
+if ! command -v claude &> /dev/null; then
+    echo "ERROR: Claude Code CLI not found after installation"
+    # Try common npm global paths
+    export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"
+    if ! command -v claude &> /dev/null; then
+        echo "ERROR: Claude Code CLI still not found. Installation failed."
+        exit 1
+    fi
+fi
+
+echo "Claude Code version: $(claude --version 2>/dev/null || echo 'unknown')"
+
+# Install common tools that might be missing
+echo "Installing common utilities..."
+case "$OS_ID" in
+    alpine)
+        apk add --no-cache bash curl wget git jq python3 py3-pip make gcc 2>/dev/null || true
+        ;;
+    ubuntu|debian)
+        apt-get install -y -qq bash curl wget git jq python3 python3-pip make gcc 2>/dev/null || true
+        ;;
+    *)
+        # Best-effort for other distros
+        true
+        ;;
+esac
+
+# Create working directories
+mkdir -p /installed-agent/scripts
+mkdir -p /installed-agent/pilot_agent
+mkdir -p /logs/agent
+
+# Create non-root user for Claude Code
+# (--dangerously-skip-permissions refuses to run as root)
+if ! id pilot &>/dev/null; then
+    useradd -m -s /bin/bash pilot 2>/dev/null || adduser -D -s /bin/bash pilot 2>/dev/null || true
+fi
+# Give pilot user ownership of workspace
+chown -R pilot:pilot /app /installed-agent /logs 2>/dev/null || true
+
+echo "=== Pilot Agent: Installation complete ==="
