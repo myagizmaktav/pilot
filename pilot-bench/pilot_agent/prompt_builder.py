@@ -427,7 +427,7 @@ def _build_inline(
 
     sections.append(
         "## Constraints\n\n"
-        "- Timeout: ~25 minutes\n"
+        "- Timeout: ~60 minutes\n"
         "- Check if packages already installed before installing\n"
         "- Never modify /tests/\n"
         "- Container state persists — your changes are the final submission"
