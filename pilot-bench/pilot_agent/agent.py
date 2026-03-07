@@ -10,6 +10,7 @@ Pipeline:
 """
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -20,6 +21,8 @@ from harbor.models.agent.context import AgentContext
 from harbor.models.trial.paths import EnvironmentPaths
 
 from .prompt_builder import build_prompt
+
+logger = logging.getLogger(__name__)
 
 # Paths inside the container
 BOOTSTRAP_SCRIPT = "/installed-agent/scripts/bootstrap.sh"
@@ -405,6 +408,37 @@ PILOT_VERIFY_EOF"""
         env.update(self._build_env())
         return env
 
+    def _find_task_tests_dir(self) -> Path | None:
+        """Find test files in harbor's task cache for test-aware prompting.
+
+        Harbor caches downloaded tasks at ~/.cache/harbor/tasks/<id>/<task_name>/tests/.
+        The trial config.json (written by harbor before setup) contains the task path.
+        """
+        try:
+            config_path = self.logs_dir / "config.json"
+            if not config_path.exists():
+                return None
+
+            config = json.loads(config_path.read_text())
+            task_path = config.get("task", {}).get("path", "")
+            if not task_path:
+                return None
+
+            cache_base = Path.home() / ".cache" / "harbor" / "tasks"
+            if not cache_base.exists():
+                return None
+
+            # Scan cache for matching task directory
+            for parent in cache_base.iterdir():
+                candidate = parent / task_path / "tests"
+                if candidate.is_dir():
+                    return candidate
+
+        except Exception as e:
+            logger.debug(f"Could not find task tests in cache: {e}")
+
+        return None
+
     async def setup(self, environment) -> None:
         """Install agent + upload helper scripts."""
         # Run base setup (installs Claude Code via template)
@@ -442,3 +476,24 @@ PILOT_VERIFY_EOF"""
         await environment.exec(
             command='echo "# Container-side init — no Harbor deps" > /installed-agent/pilot_agent/__init__.py',
         )
+
+        # Upload task test files for test-aware prompting + self-verify loop.
+        # Harbor caches tests locally but only mounts them at /tests/ during
+        # verification — NOT during agent execution. By uploading them early,
+        # the prompt builder can inject test content and the verify loop can
+        # actually run self-tests.
+        tests_dir = self._find_task_tests_dir()
+        if tests_dir:
+            await environment.exec(command="mkdir -p /tests")
+            uploaded = 0
+            for test_file in sorted(tests_dir.iterdir()):
+                if test_file.is_file():
+                    await environment.upload_file(
+                        source_path=test_file,
+                        target_path=f"/tests/{test_file.name}",
+                    )
+                    uploaded += 1
+            if uploaded:
+                logger.info(f"Uploaded {uploaded} test files to /tests/")
+        else:
+            logger.debug("No test files found in harbor cache")
