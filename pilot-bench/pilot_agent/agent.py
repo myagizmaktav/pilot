@@ -415,7 +415,10 @@ PILOT_VERIFY_EOF"""
         The trial config.json (written by harbor before setup) contains the task path.
         """
         try:
-            config_path = self.logs_dir / "config.json"
+            # config.json is at trial root (parent of agent/ logs_dir)
+            config_path = self.logs_dir.parent / "config.json"
+            if not config_path.exists():
+                config_path = self.logs_dir / "config.json"
             if not config_path.exists():
                 return None
 
