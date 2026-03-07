@@ -6,6 +6,9 @@ set -e
 OUT="/installed-agent/env-context.txt"
 mkdir -p /installed-agent
 
+# Fix git safe.directory errors in containers (root owns /app, agent runs as 'pilot')
+git config --global --add safe.directory '*' 2>/dev/null || true
+
 {
     echo "=== ENVIRONMENT CONTEXT ==="
     echo ""
