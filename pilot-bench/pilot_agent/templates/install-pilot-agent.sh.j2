@@ -74,6 +74,9 @@ case "$OS_ID" in
         ;;
 esac
 
+# Install Jinja2 for template-based prompt building
+pip3 install --quiet jinja2 2>/dev/null || pip install --quiet jinja2 2>/dev/null || true
+
 # Create working directories
 mkdir -p /installed-agent/scripts
 mkdir -p /installed-agent/pilot_agent
