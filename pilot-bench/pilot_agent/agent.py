@@ -186,9 +186,16 @@ claude -p "$PROMPT" \
 RUNNER_EOF
 chmod +x /tmp/pilot-run-claude.sh
 
-# Write auth env vars to file (only non-empty — Claude Code picks API_KEY over OAuth if set)
+# Write auth env vars to file
+# Priority: mounted token file (refreshed by host) > env var (static, may expire)
 echo -n "" > /tmp/pilot-env.sh
-[ -n "${{CLAUDE_CODE_OAUTH_TOKEN:-}}" ] && echo "export CLAUDE_CODE_OAUTH_TOKEN=\"$CLAUDE_CODE_OAUTH_TOKEN\"" >> /tmp/pilot-env.sh
+if [ -f /tmp/pilot-bench-token ] && [ -s /tmp/pilot-bench-token ]; then
+    echo "export CLAUDE_CODE_OAUTH_TOKEN=\"$(cat /tmp/pilot-bench-token)\"" >> /tmp/pilot-env.sh
+    echo "[pilot] Using refreshed token from mounted file"
+elif [ -n "${{CLAUDE_CODE_OAUTH_TOKEN:-}}" ]; then
+    echo "export CLAUDE_CODE_OAUTH_TOKEN=\"$CLAUDE_CODE_OAUTH_TOKEN\"" >> /tmp/pilot-env.sh
+    echo "[pilot] Using token from env var (may expire)"
+fi
 [ -n "${{ANTHROPIC_API_KEY:-}}" ] && echo "export ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\"" >> /tmp/pilot-env.sh
 [ -n "${{ANTHROPIC_AUTH_TOKEN:-}}" ] && echo "export ANTHROPIC_AUTH_TOKEN=\"$ANTHROPIC_AUTH_TOKEN\"" >> /tmp/pilot-env.sh
 chmod 600 /tmp/pilot-env.sh
@@ -286,7 +293,12 @@ PROMPT_EOF
     # Execute fix via Claude Code (as non-root 'pilot' user)
     cat > /tmp/pilot-retry-claude.sh << 'RETRY_RUNNER_EOF'
 #!/bin/bash
-source /tmp/pilot-env.sh
+# Re-read token from mounted file (may have been refreshed since main execution)
+if [ -f /tmp/pilot-bench-token ] && [ -s /tmp/pilot-bench-token ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN="$(cat /tmp/pilot-bench-token)"
+else
+    source /tmp/pilot-env.sh
+fi
 SESSION_ID="$1"; shift
 RETRY_PROMPT_FILE="$1"; shift
 MODEL="$1"; shift

@@ -13,9 +13,9 @@ fi
 
 echo "Detected OS: $OS_ID"
 
-# Install Node.js if not present
-if ! command -v node &> /dev/null; then
-    echo "Installing Node.js..."
+# Install Node.js + npm if not present (some images have node without npm)
+if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+    echo "Installing Node.js + npm..."
     case "$OS_ID" in
         alpine)
             apk add --no-cache nodejs npm
