@@ -9,6 +9,16 @@ mkdir -p /installed-agent
 # Fix git safe.directory errors in containers (root owns /app, agent runs as 'pilot')
 git config --global --add safe.directory '*' 2>/dev/null || true
 
+# Add reliable DNS fallback — Daytona sandboxes sometimes have DNS resolution failures
+# that kill both the agent (Claude API calls) and verifier (downloading deps)
+if [ -f /etc/resolv.conf ]; then
+    if ! grep -q "8.8.8.8" /etc/resolv.conf 2>/dev/null; then
+        echo "nameserver 8.8.8.8" >> /etc/resolv.conf 2>/dev/null || true
+        echo "nameserver 8.8.4.4" >> /etc/resolv.conf 2>/dev/null || true
+        echo "[bootstrap] Added Google DNS fallback to /etc/resolv.conf"
+    fi
+fi
+
 {
     echo "=== ENVIRONMENT CONTEXT ==="
     echo ""

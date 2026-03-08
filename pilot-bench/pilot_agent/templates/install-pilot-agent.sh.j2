@@ -77,6 +77,29 @@ esac
 # Install Jinja2 for template-based prompt building
 pip3 install --quiet jinja2 2>/dev/null || pip install --quiet jinja2 2>/dev/null || true
 
+# Install uv/uvx — many terminal-bench verifiers depend on it
+# Install early while DNS is still reliable (some sandboxes degrade over time)
+echo "Installing uv (Python package manager)..."
+if ! command -v uv &> /dev/null; then
+    curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh 2>/dev/null || true
+    # Add to PATH for current and future shells
+    export PATH="$HOME/.local/bin:$PATH:/root/.local/bin:/root/.cargo/bin"
+    # Ensure it's on PATH for verifier (runs as root)
+    if [ -f /root/.local/bin/uv ]; then
+        ln -sf /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true
+        ln -sf /root/.local/bin/uvx /usr/local/bin/uvx 2>/dev/null || true
+    fi
+    if [ -f "$HOME/.local/bin/uv" ]; then
+        ln -sf "$HOME/.local/bin/uv" /usr/local/bin/uv 2>/dev/null || true
+        ln -sf "$HOME/.local/bin/uvx" /usr/local/bin/uvx 2>/dev/null || true
+    fi
+fi
+if command -v uv &> /dev/null; then
+    echo "uv version: $(uv --version 2>/dev/null)"
+else
+    echo "WARNING: uv installation failed (verifier tests may fail)"
+fi
+
 # Create working directories
 mkdir -p /installed-agent/scripts
 mkdir -p /installed-agent/pilot_agent
