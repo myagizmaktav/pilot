@@ -865,3 +865,48 @@ func TestBuildPromptNoNavigator(t *testing.T) {
 		t.Error("Should contain task description")
 	}
 }
+
+func TestBuildPromptLocalMode(t *testing.T) {
+	// Test local/bench mode: problem-solving prompt without restrictive constraints
+	tempDir, err := os.MkdirTemp("", "pilot-test-local")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	runner := NewRunner()
+	task := &Task{
+		ID:          "BENCH-1",
+		Title:       "Extract text from gcode",
+		Description: "Write the extracted text to /app/out.txt",
+		ProjectPath: tempDir,
+		LocalMode:   true,
+	}
+
+	prompt := runner.BuildPrompt(task, tempDir)
+
+	// Local mode should use problem-solving prompt
+	if !strings.Contains(prompt, "## Task") {
+		t.Error("Should contain task section")
+	}
+	if !strings.Contains(prompt, "## Approach") {
+		t.Error("Should contain approach section")
+	}
+	if !strings.Contains(prompt, "Read all files") {
+		t.Error("Should instruct to read files first")
+	}
+	if !strings.Contains(prompt, "test files") {
+		t.Error("Should mention checking test files")
+	}
+
+	// Should NOT have restrictive PR constraints
+	if strings.Contains(prompt, "ONLY create files explicitly mentioned") {
+		t.Error("Local mode should not have restrictive file constraints")
+	}
+	if strings.Contains(prompt, "Do NOT create additional files") {
+		t.Error("Local mode should not restrict file creation")
+	}
+	if strings.Contains(prompt, "Commit with format") {
+		t.Error("Local mode should not have commit instructions")
+	}
+}

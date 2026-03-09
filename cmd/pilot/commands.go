@@ -404,6 +404,7 @@ Examples:
 				task.CreatePR = false
 				task.Branch = ""
 				task.DirectCommit = false
+				task.LocalMode = true
 			}
 
 			// Dry run mode - just show what would happen

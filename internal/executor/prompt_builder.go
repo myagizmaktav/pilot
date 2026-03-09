@@ -282,50 +282,33 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) string {
 	return prompt
 }
 
+<<<<<<< HEAD
 // buildLocalModePrompt constructs a problem-solving prompt for local execution (GH-2103).
 // It skips Navigator workflow, PR constraints, and project context injection.
 // Designed for `pilot task --local` where the goal is direct problem-solving.
 func (r *Runner) buildLocalModePrompt(task *Task) string {
 	var sb strings.Builder
 
-	sb.WriteString("## Problem-Solving Mode\n\n")
-	sb.WriteString("You are solving a development task locally. Focus on the problem, not process.\n\n")
+	sb.WriteString(fmt.Sprintf("## Task\n\n%s\n\n", task.Description))
 
-	sb.WriteString(fmt.Sprintf("## Task: %s\n\n", task.ID))
-	sb.WriteString(fmt.Sprintf("%s\n\n", task.Description))
+	sb.WriteString("## FIRST: Check for test files\n\n")
+	sb.WriteString("BEFORE doing anything else, check if `/tests/test_outputs.py` exists. If it does, read it — it contains the exact validation logic and expected outputs that will be used to grade your work. This is the single most important step.\n\n")
 
-	// Include acceptance criteria if present
-	if len(task.AcceptanceCriteria) > 0 {
-		sb.WriteString("## Acceptance Criteria\n\n")
-		for i, criterion := range task.AcceptanceCriteria {
-			sb.WriteString(fmt.Sprintf("%d. [ ] %s\n", i+1, criterion))
-		}
-		sb.WriteString("\n")
-	}
+	sb.WriteString("## Approach\n\n")
+	sb.WriteString("- Read all files in the working directory to understand what you have\n")
+	sb.WriteString("- Think step by step before writing code\n")
+	sb.WriteString("- Write the required output file(s) as early as possible — partial progress is better than no output\n")
+	sb.WriteString("- If a task requires analysis, write a script to do it rather than trying to reason through complex data manually\n")
+	sb.WriteString("- Install dependencies if needed (pip install, npm install, etc.)\n")
+	sb.WriteString("- After writing output, verify it matches what the test expects\n\n")
 
-	sb.WriteString("## Instructions\n\n")
-
-	// Test-first instruction when task mentions test files
-	if hasTestFiles(task.Description) {
-		sb.WriteString("- Write tests FIRST, then implement the solution\n")
-	}
-
-	sb.WriteString("- Read existing code before making changes\n")
-	sb.WriteString("- Make minimal, focused changes\n")
-	sb.WriteString("- Verify build passes: `go build ./...` (or equivalent)\n")
-	sb.WriteString("- Run tests for changed packages\n")
-	sb.WriteString("- Commit with format: `type(scope): description`\n\n")
-	sb.WriteString("Work autonomously. Do not ask for confirmation.\n")
+	sb.WriteString("## Rules\n\n")
+	sb.WriteString("- Work autonomously — do not ask for confirmation\n")
+	sb.WriteString("- Stay focused on producing the required output — avoid unnecessary exploration\n")
+	sb.WriteString("- If something fails, try a different approach instead of retrying the same thing\n")
+	sb.WriteString("- Prefer simple, direct solutions over complex ones\n")
 
 	return sb.String()
-}
-
-// hasTestFiles checks if the task description references test files.
-func hasTestFiles(description string) bool {
-	desc := strings.ToLower(description)
-	return strings.Contains(desc, "_test.go") ||
-		strings.Contains(desc, "test_") ||
-		strings.Contains(desc, "test file")
 }
 
 // buildRetryPrompt constructs a prompt for Claude Code to fix quality gate failures.
