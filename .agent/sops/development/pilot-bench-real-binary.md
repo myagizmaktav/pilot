@@ -2,7 +2,7 @@
 
 **Category**: development
 **Created**: 2026-03-08
-**Last Updated**: 2026-03-08
+**Last Updated**: 2026-03-09
 
 ---
 
@@ -26,7 +26,7 @@ The original Python bench agent (v1-v3) used a custom 9KB prompt and bypassed Pi
 
 ```
 Harbor (macOS, local)
-  └→ PilotAgent (Python shim, ~120 lines)
+  └→ PilotAgent (Python shim, ~300 lines)
        └→ setup(): install Claude Code + upload pilot binary + write config.yaml
        └→ run():   pilot task '<instruction>' --local --project /app --verbose --result-json /logs/agent/pilot-result.json
             └→ pilot binary (Go, static linux/amd64)
@@ -78,7 +78,7 @@ git init && touch README.md && git add . && git commit -m "init"
   --local --dry-run --project /tmp/bench-test
 ```
 
-**Expected**: Banner shows `Mode: local (no git workflow)`, prompt uses non-Navigator template with constraints section.
+**Expected**: Banner shows `Mode: local (no git workflow)`, prompt uses LocalMode problem-solving template (test-first, no PR constraints).
 
 **Clean up**: `rm -rf /tmp/bench-test /tmp/pilot-test`
 
@@ -104,7 +104,7 @@ harbor run \
   -t chess-best-move -t break-filter-js-from-html -t gcode-to-text
 ```
 
-**Expected**: 2/3 pass (67%). `chess-best-move` and `gcode-to-text` are reliable; `break-filter-js` needs Chromium (works on Daytona x86, failed on Docker QEMU).
+**Expected**: 3/3 pass (100%) as of val10. All three tasks reliable on Daytona x86.
 
 **Check results**:
 ```bash
@@ -221,7 +221,7 @@ pilot-bench/
 │   └── pilot-linux-amd64          # Cross-compiled binary (gitignored)
 ├── pilot_agent/
 │   ├── __init__.py                # Exports PilotAgent
-│   ├── agent.py                   # Thin shim (~120 lines)
+│   ├── agent.py                   # Thin shim (~300 lines)
 │   ├── scripts/
 │   │   └── analyze-results.py     # Result analysis tool
 │   └── templates/
@@ -276,7 +276,7 @@ ls -lh pilot-bench/bin/pilot-linux-amd64  # must exist, ~19MB
 
 **Cause**: Claude Code stuck in a loop, or large dependency install
 
-**Fix**: Check `MAIN_TIMEOUT` in agent.py (default 3600s). Harbor's `--timeout-multiplier 5.0` gives the outer timeout. Pilot binary has its own heartbeat (5 min) + watchdog (2x timeout).
+**Fix**: Check `MAIN_TIMEOUT` in agent.py (default 3600s). Harbor's `--timeout-multiplier 5.0` gives the outer timeout. Pilot binary has its own heartbeat (15 min, configurable via `executor.heartbeat_timeout` in v2.76+) + watchdog (2x timeout).
 
 ---
 
@@ -289,7 +289,8 @@ ls -lh pilot-bench/bin/pilot-linux-amd64  # must exist, ~19MB
 | Claude Opus 4.6 (raw) | - | 74.7% | |
 | Stock Claude Code | - | 58.0% | 2 commands, zero prompt engineering |
 | **Pilot (Python v3)** | feat/pilot-bench | **36.2%** | 9KB prompt, 5-step pipeline |
-| **Pilot (real binary)** | feat/pilot-bench-real | **TBD** | This workflow |
+| **Pilot (real binary, 3-task)** | feat/pilot-bench-real | **100% (3/3)** | val10 — LocalMode + test-first prompt |
+| **Pilot (real binary, 89-task)** | feat/pilot-bench-real | **TBD** | Full run in progress |
 
 **Goal**: >= 58% (match stock Claude Code, prove Pilot's prompts don't hurt)
 
@@ -303,5 +304,5 @@ ls -lh pilot-bench/bin/pilot-linux-amd64  # must exist, ~19MB
 
 ---
 
-**Last Updated**: 2026-03-08
+**Last Updated**: 2026-03-09
 **Tested With**: Go 1.24.2, Pilot v2.76.0, Harbor CLI, Daytona cloud x86
