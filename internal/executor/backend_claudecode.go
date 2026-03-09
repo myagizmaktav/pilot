@@ -481,6 +481,8 @@ func (b *ClaudeCodeBackend) executeWithFromPR(ctx context.Context, opts ExecuteO
 					result.Output = event.Message
 					result.SawSuccessResult = true // GH-2107: track successful result for timeout recovery
 				}
+				// Cancel heartbeat — process is finishing, don't kill it
+				cancelHeartbeat()
 			}
 
 			// Capture session ID from init event (GH-1265)

@@ -1,7 +1,10 @@
 #!/bin/bash
 set -e
 
-echo "=== Pilot Agent: Installing Claude Code ==="
+echo "=== Pilot Real Agent: Installing Claude Code + Pilot binary ==="
+
+# DNS fallback for Daytona sandboxes
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf 2>/dev/null || true
 
 # Detect OS
 if [ -f /etc/os-release ]; then
@@ -10,10 +13,9 @@ if [ -f /etc/os-release ]; then
 else
     OS_ID="unknown"
 fi
-
 echo "Detected OS: $OS_ID"
 
-# Install Node.js + npm if not present (some images have node without npm)
+# Install Node.js + npm if not present
 if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
     echo "Installing Node.js + npm..."
     case "$OS_ID" in
@@ -27,39 +29,48 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
             dnf install -y nodejs npm 2>/dev/null || yum install -y nodejs npm
             ;;
         *)
-            # Fallback: try curl + nvm
             if command -v curl &> /dev/null; then
                 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
                 apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm
             else
-                echo "ERROR: Cannot install Node.js — no package manager found"
+                echo "ERROR: Cannot install Node.js"
                 exit 1
             fi
             ;;
     esac
 fi
 
-echo "Node version: $(node --version)"
-echo "npm version: $(npm --version)"
+# Upgrade Node.js if too old (Claude Code needs 18+)
+NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
+if [ "$NODE_MAJOR" -lt 18 ] 2>/dev/null; then
+    echo "Node.js $NODE_MAJOR is too old, upgrading to 20..."
+    case "$OS_ID" in
+        ubuntu|debian)
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+            apt-get install -y nodejs
+            ;;
+        *)
+            npm install -g n && n 20 || true
+            ;;
+    esac
+fi
 
-# Install Claude Code CLI globally
+echo "Node version: $(node --version)"
+
+# Install Claude Code CLI
 echo "Installing Claude Code CLI..."
 npm install -g @anthropic-ai/claude-code@latest 2>&1
 
-# Verify installation
 if ! command -v claude &> /dev/null; then
-    echo "ERROR: Claude Code CLI not found after installation"
-    # Try common npm global paths
     export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"
     if ! command -v claude &> /dev/null; then
-        echo "ERROR: Claude Code CLI still not found. Installation failed."
+        echo "ERROR: Claude Code CLI installation failed"
         exit 1
     fi
 fi
-
 echo "Claude Code version: $(claude --version 2>/dev/null || echo 'unknown')"
 
-# Install common tools that might be missing
+# Install common utilities
 echo "Installing common utilities..."
 case "$OS_ID" in
     alpine)
@@ -69,48 +80,52 @@ case "$OS_ID" in
         apt-get install -y -qq bash curl wget git jq python3 python3-pip make gcc 2>/dev/null || true
         ;;
     *)
-        # Best-effort for other distros
         true
         ;;
 esac
 
-# Install Jinja2 for template-based prompt building
-pip3 install --quiet jinja2 2>/dev/null || pip install --quiet jinja2 2>/dev/null || true
+# Install uv/uvx (many terminal-bench verifiers need it)
+# Critical: verifier test.sh scripts try to install uv themselves, but DNS often
+# times out in Daytona sandboxes. We pre-install uv and make it available at
+# multiple paths so verifiers work even when their own install fails.
+echo "Installing uv..."
+curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh 2>/dev/null || true
+export PATH="$HOME/.local/bin:$PATH:/root/.local/bin:/root/.cargo/bin"
 
-# Install uv/uvx — many terminal-bench verifiers depend on it
-# Install early while DNS is still reliable (some sandboxes degrade over time)
-echo "Installing uv (Python package manager)..."
-if ! command -v uv &> /dev/null; then
-    curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh 2>/dev/null || true
-    # Add to PATH for current and future shells
-    export PATH="$HOME/.local/bin:$PATH:/root/.local/bin:/root/.cargo/bin"
-    # Ensure it's on PATH for verifier (runs as root)
-    if [ -f /root/.local/bin/uv ]; then
-        ln -sf /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true
-        ln -sf /root/.local/bin/uvx /usr/local/bin/uvx 2>/dev/null || true
-    fi
-    if [ -f "$HOME/.local/bin/uv" ]; then
-        ln -sf "$HOME/.local/bin/uv" /usr/local/bin/uv 2>/dev/null || true
-        ln -sf "$HOME/.local/bin/uvx" /usr/local/bin/uvx 2>/dev/null || true
-    fi
+# Symlink to /usr/local/bin so uv/uvx are on default PATH for all users/scripts
+if [ -f /root/.local/bin/uv ]; then
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv 2>/dev/null || true
+    ln -sf /root/.local/bin/uvx /usr/local/bin/uvx 2>/dev/null || true
 fi
-if command -v uv &> /dev/null; then
-    echo "uv version: $(uv --version 2>/dev/null)"
-else
-    echo "WARNING: uv installation failed (verifier tests may fail)"
+
+# Create /root/.local/bin/env shim — verifier test.sh scripts do
+# `source $HOME/.local/bin/env` which fails if uv's installer didn't run.
+# This no-op shim prevents that `source` from failing.
+if [ ! -f /root/.local/bin/env ]; then
+    mkdir -p /root/.local/bin
+    cat > /root/.local/bin/env << 'ENVEOF'
+# uv env shim — pre-installed by pilot agent setup
+export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+ENVEOF
 fi
+
+echo "uv version: $(uv --version 2>/dev/null || echo 'not installed')"
+
+# Initialize git repo in /app if needed (pilot task requires git)
+cd /app
+if [ ! -d .git ]; then
+    git config --global init.defaultBranch main
+    git config --global user.email "bench@pilot.dev"
+    git config --global user.name "Pilot Bench"
+    git init
+    git add -A 2>/dev/null || true
+    git commit -m "initial" --allow-empty 2>/dev/null || true
+fi
+git config --global --add safe.directory '*'
+
+# Config and pilot binary are uploaded by setup() — not handled here
 
 # Create working directories
-mkdir -p /installed-agent/scripts
-mkdir -p /installed-agent/pilot_agent
 mkdir -p /logs/agent
 
-# Create non-root user for Claude Code
-# (--dangerously-skip-permissions refuses to run as root)
-if ! id pilot &>/dev/null; then
-    useradd -m -s /bin/bash pilot 2>/dev/null || adduser -D -s /bin/bash pilot 2>/dev/null || true
-fi
-# Give pilot user ownership of workspace
-chown -R pilot:pilot /app /installed-agent /logs 2>/dev/null || true
-
-echo "=== Pilot Agent: Installation complete ==="
+echo "=== Pilot Real Agent: Installation complete ==="

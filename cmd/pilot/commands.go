@@ -314,6 +314,7 @@ func newTaskCmd() *cobra.Command {
 	var enableAlerts bool
 	var enableBudget bool
 	var localMode bool    // GH-2103: problem-solving prompt without PR constraints
+	var resultJSON string // Write ExecutionResult as JSON to file
 	var teamID string     // GH-635: team project access scoping
 	var teamMember string // GH-635: member email for access scoping
 
@@ -370,8 +371,12 @@ Examples:
 			fmt.Println("───────────────────────────────────────")
 			fmt.Printf("   Task ID:   %s\n", taskID)
 			fmt.Printf("   Project:   %s\n", projectPath)
-			fmt.Printf("   Branch:    %s\n", branchName)
-			fmt.Printf("   Create PR: ✓ always enabled\n")
+			if localMode {
+				fmt.Printf("   Mode:      local (no git workflow)\n")
+			} else {
+				fmt.Printf("   Branch:    %s\n", branchName)
+				fmt.Printf("   Create PR: ✓ always enabled\n")
+			}
 			if hasNavigator {
 				fmt.Printf("   Navigator: ✓ enabled\n")
 			}
@@ -392,6 +397,13 @@ Examples:
 				Verbose:     verbose,
 				CreatePR:    true,
 				LocalMode:   localMode, // GH-2103
+			}
+
+			// Local mode: skip git workflow (no branch/push/PR)
+			if localMode {
+				task.CreatePR = false
+				task.Branch = ""
+				task.DirectCommit = false
 			}
 
 			// Dry run mode - just show what would happen
@@ -737,6 +749,16 @@ Examples:
 				return fmt.Errorf("execution failed: %w", err)
 			}
 
+			// Write result as JSON if --result-json flag is set
+			if resultJSON != "" {
+				data, jsonErr := json.MarshalIndent(result, "", "  ")
+				if jsonErr != nil {
+					fmt.Printf("   ⚠️  Failed to marshal result JSON: %v\n", jsonErr)
+				} else if writeErr := os.WriteFile(resultJSON, data, 0644); writeErr != nil {
+					fmt.Printf("   ⚠️  Failed to write result JSON to %s: %v\n", resultJSON, writeErr)
+				}
+			}
+
 			// Build execution report
 			report := &executor.ExecutionReport{
 				TaskID:           result.TaskID,
@@ -808,6 +830,7 @@ Examples:
 	cmd.Flags().BoolVar(&enableAlerts, "alerts", false, "Enable alerts for task execution")
 	cmd.Flags().BoolVar(&enableBudget, "budget", false, "Enable budget enforcement for this task")
 	cmd.Flags().BoolVar(&localMode, "local", false, "Use problem-solving prompt without PR/Navigator constraints")
+	cmd.Flags().StringVar(&resultJSON, "result-json", "", "Write execution result as JSON to file path")
 	cmd.Flags().StringVar(&teamID, "team", "", "Team ID or name for project access scoping (overrides config)")
 	cmd.Flags().StringVar(&teamMember, "team-member", "", "Member email for team access scoping (overrides config)")
 

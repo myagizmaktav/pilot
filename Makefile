@@ -22,6 +22,12 @@ build-all:
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-amd64 ./cmd/pilot
 	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-arm64 ./cmd/pilot
 
+# Build bench binary for Terminal-Bench (linux/amd64, static)
+bench-binary:
+	@echo "Building bench binary (linux/amd64)..."
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(VERSION)" -o pilot-bench/bin/pilot-linux-amd64 ./cmd/pilot
+	@ls -lh pilot-bench/bin/pilot-linux-amd64
+
 # Package binaries into tar.gz archives for release
 # Binary inside tar is named "pilot" (not pilot-darwin-arm64) to match upgrade code.
 # COPYFILE_DISABLE=1 prevents macOS tar from adding ._* resource fork entries.

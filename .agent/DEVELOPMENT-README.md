@@ -109,6 +109,8 @@ Disable via config: `executor.navigator.auto_init: false`
 | `.agent/system/PR-CHECKLIST.md` | Before merging PRs in `--autopilot=prod` mode |
 | `.agent/tasks/TASK-XX.md` | Active task details |
 | `.agent/sops/*.md` | Before modifying integrations |
+| `.agent/sops/development/pilot-bench-real-binary.md` | Running real-binary bench on Daytona |
+| `.agent/sops/daytona-bench-operations.md` | Daytona sandbox management + monitoring |
 | `.agent/.context-markers/` | Resume after break |
 
 ## Current State
