@@ -72,12 +72,19 @@ gh pr merge <number>
 The `BuildPrompt()` function MUST invoke `/nav-loop` mode when `.agent/` exists. This is Pilot's core value proposition:
 
 ```go
+// LocalMode takes priority — checked FIRST (GH-2103, bench val10)
+if task.LocalMode {
+    return r.buildLocalModePrompt(task)  // problem-solving prompt, no PR constraints
+}
+
 // Navigator-aware prompt structure for medium/complex tasks
 if useNavigator {
     sb.WriteString("Use /nav-loop mode for this task.\n\n")  // <- NEVER REMOVE
     // ... PILOT EXECUTION MODE override for CLAUDE.md rules
 }
 ```
+
+**LocalMode priority (GH-2103)**: `task.LocalMode` MUST be checked before Navigator detection. Sandbox environments (bench, CI) may have `.agent/` directories that hijack the prompt to Navigator path. LocalMode = problem-solving prompt without PR workflow constraints.
 
 **Incident 2026-01-26**: Navigator prefix was accidentally removed during "simplification" refactor. Pilot without Navigator = just another Claude Code wrapper with zero value.
 
@@ -266,6 +273,14 @@ pilot start --env=prod --telegram --github   # Safe, manual approval
 ---
 
 ## Active Work
+
+### Terminal-Bench Benchmark (feat/pilot-bench-real)
+
+Full 89-task run in progress on Daytona. Benchmarking real Pilot Go binary vs stock Claude Code (58%).
+- **Validation**: 3/3 (100%) on val10 — break-filter, chess, gcode all pass
+- **Branch**: `feat/pilot-bench-real` — bench workspace, not for merge to main
+- **Findings → main**: GH-2103 (LocalMode priority), GH-2104 (configurable heartbeat) — both merged
+- **Docs**: `pilot-bench/README.md`, `pilot-bench/WORKLOG.md`, `.agent/sops/development/pilot-bench-real-binary.md`
 
 **Source of truth: GitHub Issues with `pilot` label**
 
