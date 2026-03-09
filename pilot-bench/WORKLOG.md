@@ -89,10 +89,22 @@ Ported real `~/.pilot/config.yaml` executor settings to bench:
 
 **Gcode failure**: `pip install numpy` ran as background task (FORCE_AUTO_BACKGROUND_TASKS=1) → timed out → execution failed. Fixed by removing the env var.
 
+### Validation Run 5 (FORCE_AUTO_BACKGROUND removed, quality gate PATH broken)
+| Task | Score | Cost | Retries | Issue |
+|------|-------|------|---------|-------|
+| break-filter | **1.0** | $0.57 | 2 | OK |
+| chess-best-move | **0.0** | $1.51 | 1 | Quality gate exit 127: `uvx` not on PATH in Go exec.Command |
+| gcode-to-text | **0.0** | $1.19 | 0 | Request timed out after 30 turns — spent time rendering, never wrote out.txt |
+
+**Chess root cause**: quality gate `bash -c 'source /root/.local/bin/env && uvx ...'` fails because Go's `exec.Command` doesn't inherit shell PATH. Fixed by using explicit `export PATH=/usr/local/bin:/root/.local/bin:$PATH`.
+
+**Gcode**: genuinely hard task. Claude spends all tokens on matplotlib rendering, times out before writing the answer file. Not an infra issue.
+
 ### Commits (Day 4)
 - `4a4a56b3` feat(bench): real binary agent + heartbeat fix + verifier uv shim
 - `d7b2ef09` feat(bench): add production config — hooks, quality gates, effort routing
 - `bcecdaf0` fix(bench): remove FORCE_AUTO_BACKGROUND_TASKS causing pip install timeouts
+- `a1877a49` fix(bench): use absolute PATH in quality gate command
 
 ---
 
