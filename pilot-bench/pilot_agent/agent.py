@@ -63,7 +63,6 @@ class PilotAgent(BaseInstalledAgent):
             env={
                 **env,
                 "IS_SANDBOX": "1",
-                "FORCE_AUTO_BACKGROUND_TASKS": "1",
             },
             timeout_sec=MAIN_TIMEOUT,
         )]
