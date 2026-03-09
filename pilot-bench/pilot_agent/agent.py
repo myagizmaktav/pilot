@@ -149,6 +149,81 @@ class PilotAgent(BaseInstalledAgent):
             return self.model_name
         return "claude-opus-4-6"
 
+    def _build_config(self, model: str) -> str:
+        """Build production-grade config.yaml for bench runs.
+
+        Mirrors the real production config with executor features that
+        improve task success: hooks, quality gates, effort routing,
+        structured output, and timeouts.
+        """
+        return f"""version: "1.0"
+orchestrator:
+  model: "{model}"
+executor:
+  type: "claude-code"
+  claude_code:
+    command: claude
+    use_structured_output: true
+  hooks:
+    enabled: true
+    run_tests_on_stop: true
+    block_destructive: true
+    lint_on_save: false
+  model_routing:
+    enabled: true
+    trivial: "{model}"
+    simple: "{model}"
+    medium: "{model}"
+    complex: "{model}"
+  timeout:
+    default: 30m
+    trivial: 15m
+    simple: 25m
+    medium: 30m
+    complex: 60m
+  effort_routing:
+    enabled: true
+    trivial: low
+    simple: medium
+    medium: high
+    complex: high
+  effort_classifier:
+    enabled: true
+    model: claude-haiku-4-5-20251001
+    timeout: 30s
+  intent_judge:
+    enabled: true
+    model: claude-haiku-4-5-20251001
+    max_diff_chars: 8000
+  retry:
+    enabled: true
+    rate_limit:
+      max_attempts: 3
+      initial_backoff: 30s
+      backoff_multiplier: 2
+    api_error:
+      max_attempts: 3
+      initial_backoff: 5s
+      backoff_multiplier: 2
+    timeout:
+      max_attempts: 2
+      initial_backoff: 0s
+      backoff_multiplier: 0
+      extend_timeout: true
+      timeout_multiplier: 1.5
+quality:
+  enabled: true
+  gates:
+    - name: test
+      type: test
+      command: "bash -c 'if [ -f /tests/test_outputs.py ]; then cd /app && source /root/.local/bin/env && uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1; fi'"
+      required: true
+      timeout: 5m
+      max_retries: 2
+      retry_delay: 5s
+      failure_hint: "Tests failed. Read /tests/test_outputs.py to understand what is expected, then fix your implementation."
+"""
+
     async def setup(self, environment) -> None:
         """Install Claude Code + pilot binary, write config, upload test files."""
         # Base setup: renders install-pilot-agent.sh.j2, uploads, executes
@@ -170,23 +245,9 @@ class PilotAgent(BaseInstalledAgent):
                 f"Run 'make bench-binary' first."
             )
 
-        # Write config with resolved model
-        # Force all complexity tiers to use the same model (Opus)
-        # Default routing sends medium tasks to Sonnet — causes API timeouts in bench
+        # Write config matching production settings
         model = self._resolve_model()
-        config = (
-            f'version: "1.0"\n'
-            f"orchestrator:\n"
-            f'  model: "{model}"\n'
-            f"executor:\n"
-            f'  type: "claude-code"\n'
-            f"  model_routing:\n"
-            f"    enabled: true\n"
-            f'    trivial: "{model}"\n'
-            f'    simple: "{model}"\n'
-            f'    medium: "{model}"\n'
-            f'    complex: "{model}"\n'
-        )
+        config = self._build_config(model)
         await environment.exec(
             command=f"mkdir -p /root/.pilot && cat > /root/.pilot/config.yaml << 'CFGEOF'\n{config}CFGEOF",
         )
