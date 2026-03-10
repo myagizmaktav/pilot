@@ -175,42 +175,111 @@ harbor run --job-name pilot-real-full-v1 -o jobs \
 
 **ETA**: 12-20h (89 tasks, sequential, 5x timeout multiplier)
 
+### Full Run v1 Results (stopped at 18/89)
+
+Stopped after 11 hours — enough signal to identify fixable patterns.
+
+| Metric | Value |
+|--------|-------|
+| **Score** | **10/18 = 55.6%** |
+| Passed | 10: break-filter, largest-eigenval, llm-inference-batching-scheduler, log-summary-date-ranges, merge-diff-arc-agi-task, modernize-scientific-stack, password-recovery, path-tracing, portfolio-optimization, write-compressor |
+| Failed | 6: gpt2-codegolf, path-tracing-reverse, pytorch-model-cli, reshard-c4-data, torch-tensor-parallelism, winning-avg-corewars |
+| Errors | 2: prove-plus-comm (setup /app missing), regex-chess (result parsing crash) |
+
+### Failure Analysis
+
+| Category | Tasks | Root Cause |
+|----------|-------|------------|
+| **Timeout from dep install** | gpt2-codegolf, path-tracing-reverse, pytorch-model-cli, reshard-c4-data | PyTorch (915MB), HuggingFace datasets eat 100% of timeout |
+| **Network/infra** | torch-tensor-parallelism | PyTorch CPU wheel download: ConnectionResetError |
+| **Task difficulty** | winning-avg-corewars | Genuinely hard optimization — not fixable by infra |
+| **Setup failure** | prove-plus-comm | Container has no /app dir, install script `cd /app` fails |
+| **Result parsing** | regex-chess | `'str' object has no attribute 'get'` in agent.py |
+
+## Day 6 (Mar 10): Failure Fixes + Full Run v2
+
+### Fixes Applied
+
+1. **Pre-install heavy deps** (`install-pilot-agent.sh.j2`):
+   - torch (CPU), numpy, scipy, pandas, matplotlib pre-installed in container
+   - Saves 5-15 min per ML task
+
+2. **Working directory detection** (`install-pilot-agent.sh.j2`):
+   - Fallback chain: /app → /home → /workspace → /root → create /app
+   - Fixes prove-plus-comm setup failure
+
+3. **Result parsing** (`agent.py`):
+   - `isinstance(result, dict)` check before `.get()` calls
+   - Fixes regex-chess crash
+
+4. **Timeout** (`agent.py`):
+   - `MAIN_TIMEOUT` 60m → 90m
+
+5. **Prompt dep hint** (`prompt_builder.go`):
+   - "These packages are PRE-INSTALLED — do NOT waste time installing them"
+   - Lists torch, numpy, scipy, pandas, matplotlib
+
+### Commit
+- `8ef32725` fix(bench): pre-install heavy deps + workdir detection + timeout 90m
+
+### Full Run v2 Launched
+
+```bash
+source .env && cd pilot-bench && \
+harbor run --job-name pilot-real-full-v2 -o jobs \
+  -d terminal-bench@2.0 --agent-import-path "pilot_agent:PilotAgent" \
+  -m "anthropic/claude-opus-4-6" -e daytona -n 1 --timeout-multiplier 5.0 \
+  --ae "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"
+```
+
+**Projected**: 55.6% → 78-83% from recovering timeout + setup failures.
+
 ---
 
 ## Current State
 
 ### What Works
 - Real Pilot Go binary running in Daytona sandboxes
-- LocalMode prompt — problem-solving, test-first, no PR constraints
-- Quality gates with test retry (game changer for chess-like tasks)
-- Verifier uv shim (no more false negatives from DNS timeouts)
+- LocalMode prompt — problem-solving, test-first, pre-installed deps hint
+- Quality gates with test retry
+- Pre-installed heavy deps (torch, numpy, scipy, pandas, matplotlib)
+- Working directory detection with fallback
+- Verifier uv shim
 - Effort routing, structured output, hooks
-- ~$1-1.30 per task cost
 - 100% on 3-task validation (val10)
+- 55.6% on 18-task partial run v1 (baseline)
 
 ### What's Left
-- [ ] Full 89-task run results (in progress)
-- [ ] Compare score vs stock Claude Code (58%) and Python agent (36.2%)
-- [ ] Analyze failures by category, iterate on prompt if needed
-- [ ] Wire ANTHROPIC_API_KEY for intent judge (currently only OAuth token)
+- [ ] Full 89-task v2 run results (in progress)
+- [ ] Compare v2 score vs v1 (55.6%) and stock Claude Code (58%)
+- [ ] If <70%: analyze new failures, iterate
+- [ ] If ≥70%: submit to leaderboard
+- [ ] Wire ANTHROPIC_API_KEY for intent judge
 
-### What's Done (from earlier "What's Left")
+### What's Done
 - [x] Validate gcode fix → PASSED in val10
 - [x] HeartbeatTimeout configurable → GH-2104, merged to main
 - [x] LocalMode prompt priority → GH-2103, merged to main
 - [x] Heartbeat cancel on result → GH-2103, merged to main
+- [x] Full run v1 (stopped at 18/89, enough for failure analysis)
+- [x] Pre-install heavy deps in container
+- [x] Working directory detection
+- [x] Result parsing fix
+- [x] Timeout increase 60m → 90m
+- [x] Prompt pre-installed deps hint
 
 ### Known Limitations
 - Intent judge disabled (needs ANTHROPIC_API_KEY, we only pass OAuth)
 - DNS unreliable in Daytona sandboxes (mitigated with 8.8.8.8 + uv shim)
 - Sequential mode only (n=1, ~4GiB per sandbox, Daytona free tier 10GiB)
 - Full run takes 12-20h
+- `winning-avg-corewars` is genuinely hard — unlikely to fix via infra
 
 ### Key Files
 | File | Purpose |
 |------|---------|
 | `pilot-bench/pilot_agent/agent.py` | Python agent shim (~300 lines) |
-| `pilot-bench/pilot_agent/templates/install-pilot-agent.sh.j2` | Container bootstrap |
+| `pilot-bench/pilot_agent/templates/install-pilot-agent.sh.j2` | Container bootstrap + dep pre-install |
 | `pilot-bench/pilot_agent/scripts/analyze-results.py` | Post-run failure analysis |
 | `internal/executor/prompt_builder.go` | Prompt template — #1 lever for bench score |
 | `internal/executor/runner.go` | Task struct + execution pipeline |
@@ -220,4 +289,4 @@ harbor run --job-name pilot-real-full-v1 -o jobs \
 
 ---
 
-**Last Updated**: 2026-03-09T22:00Z
+**Last Updated**: 2026-03-10T12:15Z
