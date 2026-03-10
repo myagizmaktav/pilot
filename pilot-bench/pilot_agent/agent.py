@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Paths
 AGENT_LOG_DIR = "/logs/agent"
 RESULT_JSON = f"{AGENT_LOG_DIR}/pilot-result.json"
-MAIN_TIMEOUT = 3600  # 60 min
+MAIN_TIMEOUT = 5400  # 90 min — heavy deps (PyTorch) need more time
 
 
 class PilotAgent(BaseInstalledAgent):
@@ -83,10 +83,13 @@ class PilotAgent(BaseInstalledAgent):
         if result_file.exists():
             try:
                 result = json.loads(result_file.read_text())
-                context.n_input_tokens = result.get("TokensInput", 0)
-                context.n_output_tokens = result.get("TokensOutput", 0)
-                context.cost_usd = result.get("EstimatedCostUSD", 0.0)
-                return
+                if not isinstance(result, dict):
+                    logger.warning(f"Pilot result JSON is not a dict: {type(result)}")
+                else:
+                    context.n_input_tokens = result.get("TokensInput", 0)
+                    context.n_output_tokens = result.get("TokensOutput", 0)
+                    context.cost_usd = result.get("EstimatedCostUSD", 0.0)
+                    return
             except (json.JSONDecodeError, ValueError) as e:
                 logger.warning(f"Failed to parse pilot result JSON: {e}")
 

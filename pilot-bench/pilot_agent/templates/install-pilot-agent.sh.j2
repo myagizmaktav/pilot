@@ -111,8 +111,37 @@ fi
 
 echo "uv version: $(uv --version 2>/dev/null || echo 'not installed')"
 
-# Initialize git repo in /app if needed (pilot task requires git)
-cd /app
+# Pre-install heavy Python dependencies
+# Many terminal-bench tasks need PyTorch/numpy/scipy. Installing at runtime
+# consumes 5-15 min of the execution timeout, causing task failures.
+# Pre-installing here saves that time for actual problem-solving.
+echo "Pre-installing heavy Python dependencies..."
+pip install --break-system-packages --no-cache-dir numpy scipy 2>/dev/null || true
+pip install --break-system-packages --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
+    pip install --break-system-packages --no-cache-dir torch 2>/dev/null || true
+pip install --break-system-packages --no-cache-dir pandas matplotlib 2>/dev/null || true
+echo "Python deps installed: $(python3 -c 'import torch; print(f"torch={torch.__version__}")' 2>/dev/null || echo 'torch=N/A') $(python3 -c 'import numpy; print(f"numpy={numpy.__version__}")' 2>/dev/null || echo 'numpy=N/A')"
+
+# Detect working directory — some containers use /app, others /home or /root
+WORK_DIR="/app"
+if [ ! -d "$WORK_DIR" ]; then
+    # Try common alternatives
+    for candidate in /home /workspace /root /tmp/work; do
+        if [ -d "$candidate" ]; then
+            WORK_DIR="$candidate"
+            break
+        fi
+    done
+    # Last resort: create /app
+    if [ ! -d "$WORK_DIR" ]; then
+        mkdir -p /app
+        WORK_DIR="/app"
+    fi
+fi
+echo "Working directory: $WORK_DIR"
+
+# Initialize git repo if needed (pilot task requires git)
+cd "$WORK_DIR"
 if [ ! -d .git ]; then
     git config --global init.defaultBranch main
     git config --global user.email "bench@pilot.dev"

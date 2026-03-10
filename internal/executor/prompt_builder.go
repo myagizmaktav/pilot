@@ -294,12 +294,19 @@ func (r *Runner) buildLocalModePrompt(task *Task) string {
 	sb.WriteString("## FIRST: Check for test files\n\n")
 	sb.WriteString("BEFORE doing anything else, check if `/tests/test_outputs.py` exists. If it does, read it — it contains the exact validation logic and expected outputs that will be used to grade your work. This is the single most important step.\n\n")
 
+	sb.WriteString("## Environment\n\n")
+	sb.WriteString("The following packages are PRE-INSTALLED — do NOT waste time installing them:\n")
+	sb.WriteString("- Python: torch, numpy, scipy, pandas, matplotlib\n")
+	sb.WriteString("- System: git, curl, wget, jq, gcc, make\n")
+	sb.WriteString("- Tools: uv, uvx (at /usr/local/bin/)\n")
+	sb.WriteString("Only install packages that are NOT in this list.\n\n")
+
 	sb.WriteString("## Approach\n\n")
 	sb.WriteString("- Read all files in the working directory to understand what you have\n")
 	sb.WriteString("- Think step by step before writing code\n")
 	sb.WriteString("- Write the required output file(s) as early as possible — partial progress is better than no output\n")
 	sb.WriteString("- If a task requires analysis, write a script to do it rather than trying to reason through complex data manually\n")
-	sb.WriteString("- Install dependencies if needed (pip install, npm install, etc.)\n")
+	sb.WriteString("- Do NOT install torch, numpy, scipy, pandas, or matplotlib — they are already available\n")
 	sb.WriteString("- After writing output, verify it matches what the test expects\n\n")
 
 	sb.WriteString("## Rules\n\n")

@@ -899,6 +899,11 @@ func TestBuildPromptLocalMode(t *testing.T) {
 		t.Error("Should mention checking test files")
 	}
 
+	// Should have pre-installed deps hint
+	if !strings.Contains(prompt, "PRE-INSTALLED") {
+		t.Error("Should list pre-installed packages to avoid wasting time")
+	}
+
 	// Should NOT have restrictive PR constraints
 	if strings.Contains(prompt, "ONLY create files explicitly mentioned") {
 		t.Error("Local mode should not have restrictive file constraints")
