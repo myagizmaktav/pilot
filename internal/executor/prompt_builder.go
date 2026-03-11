@@ -295,25 +295,33 @@ func (r *Runner) buildLocalModePrompt(task *Task) string {
 	sb.WriteString("BEFORE doing anything else, check if `/tests/test_outputs.py` exists. If it does, read it — it contains the exact validation logic and expected outputs that will be used to grade your work. This is the single most important step.\n\n")
 
 	sb.WriteString("## Environment\n\n")
-	sb.WriteString("The following packages are PRE-INSTALLED — do NOT waste time installing them:\n")
-	sb.WriteString("- Python: torch, numpy, scipy, pandas, matplotlib\n")
+	sb.WriteString("Pre-installed:\n")
+	sb.WriteString("- Python: numpy\n")
 	sb.WriteString("- System: git, curl, wget, jq, gcc, make\n")
 	sb.WriteString("- Tools: uv, uvx (at /usr/local/bin/)\n")
-	sb.WriteString("Only install packages that are NOT in this list.\n\n")
+	sb.WriteString("Many task containers also have torch, scipy, pandas pre-installed in their Docker image. Check before installing.\n")
+	sb.WriteString("If you need torch and it's not available, install CPU-only: `pip install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu`\n\n")
 
 	sb.WriteString("## Approach\n\n")
 	sb.WriteString("- Read all files in the working directory to understand what you have\n")
-	sb.WriteString("- Think step by step before writing code\n")
+	sb.WriteString("- Read test files to understand what is expected\n")
 	sb.WriteString("- Write the required output file(s) as early as possible — partial progress is better than no output\n")
 	sb.WriteString("- If a task requires analysis, write a script to do it rather than trying to reason through complex data manually\n")
-	sb.WriteString("- Do NOT install torch, numpy, scipy, pandas, or matplotlib — they are already available\n")
+	sb.WriteString("- Check if packages exist before installing (python3 -c 'import torch' etc.) — many are pre-installed in the container\n")
 	sb.WriteString("- After writing output, verify it matches what the test expects\n\n")
+
+	sb.WriteString("## CRITICAL: Action Bias\n\n")
+	sb.WriteString("- You MUST start writing code within the first 5 minutes. Do NOT spend extended time thinking without producing code.\n")
+	sb.WriteString("- A working brute-force solution is infinitely better than a perfect theoretical approach you never implement.\n")
+	sb.WriteString("- If a problem seems complex, write the simplest possible solution first, test it, then optimize.\n")
+	sb.WriteString("- Once your solution passes all tests, STOP IMMEDIATELY. Do not write summaries or additional analysis.\n\n")
 
 	sb.WriteString("## Rules\n\n")
 	sb.WriteString("- Work autonomously — do not ask for confirmation\n")
 	sb.WriteString("- Stay focused on producing the required output — avoid unnecessary exploration\n")
 	sb.WriteString("- If something fails, try a different approach instead of retrying the same thing\n")
 	sb.WriteString("- Prefer simple, direct solutions over complex ones\n")
+	sb.WriteString("- Do NOT over-think. Implement first, optimize second.\n")
 
 	return sb.String()
 }

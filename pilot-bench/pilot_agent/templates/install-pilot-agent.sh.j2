@@ -111,16 +111,14 @@ fi
 
 echo "uv version: $(uv --version 2>/dev/null || echo 'not installed')"
 
-# Pre-install heavy Python dependencies
-# Many terminal-bench tasks need PyTorch/numpy/scipy. Installing at runtime
-# consumes 5-15 min of the execution timeout, causing task failures.
-# Pre-installing here saves that time for actual problem-solving.
-echo "Pre-installing heavy Python dependencies..."
-pip install --break-system-packages --no-cache-dir numpy scipy 2>/dev/null || true
-pip install --break-system-packages --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu 2>/dev/null || \
-    pip install --break-system-packages --no-cache-dir torch 2>/dev/null || true
-pip install --break-system-packages --no-cache-dir pandas matplotlib 2>/dev/null || true
-echo "Python deps installed: $(python3 -c 'import torch; print(f"torch={torch.__version__}")' 2>/dev/null || echo 'torch=N/A') $(python3 -c 'import numpy; print(f"numpy={numpy.__version__}")' 2>/dev/null || echo 'numpy=N/A')"
+# Pre-install lightweight Python dependencies only.
+# IMPORTANT: Do NOT pre-install torch here — it's 250MB+ (CPU) or 2GB+ (full),
+# causes setup timeouts (>1800s) and disk-full errors on containers with large
+# data files. Most tasks that need torch have it in their prebuilt Docker image.
+# If a task needs torch and doesn't have it, Claude can install it during execution.
+echo "Pre-installing lightweight Python dependencies..."
+pip install --break-system-packages --no-cache-dir numpy 2>/dev/null || true
+echo "Python deps: $(python3 -c 'import numpy; print(f"numpy={numpy.__version__}")' 2>/dev/null || echo 'numpy=N/A')"
 
 # Detect working directory — some containers use /app, others /home or /root
 WORK_DIR="/app"

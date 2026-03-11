@@ -899,9 +899,30 @@ func TestBuildPromptLocalMode(t *testing.T) {
 		t.Error("Should mention checking test files")
 	}
 
-	// Should have pre-installed deps hint
-	if !strings.Contains(prompt, "PRE-INSTALLED") {
+	// Should have environment section with pre-installed deps
+	if !strings.Contains(prompt, "Pre-installed") {
 		t.Error("Should list pre-installed packages to avoid wasting time")
+	}
+	if !strings.Contains(prompt, "numpy") {
+		t.Error("Should mention numpy as pre-installed")
+	}
+	// Should tell agent to check before installing
+	if !strings.Contains(prompt, "Check if packages exist") {
+		t.Error("Should tell agent to check before installing packages")
+	}
+
+	// Should have action bias section to prevent analysis paralysis
+	if !strings.Contains(prompt, "Action Bias") {
+		t.Error("Should have action bias section")
+	}
+	if !strings.Contains(prompt, "5 minutes") {
+		t.Error("Should enforce code writing within first 5 minutes")
+	}
+	if !strings.Contains(prompt, "STOP IMMEDIATELY") {
+		t.Error("Should tell agent to stop after tests pass")
+	}
+	if !strings.Contains(prompt, "brute-force") {
+		t.Error("Should prefer working brute-force over perfect theory")
 	}
 
 	// Should NOT have restrictive PR constraints
