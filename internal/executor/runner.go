@@ -994,9 +994,11 @@ func (r *Runner) executeWithOptions(ctx context.Context, task *Task, allowWorktr
 	// GH-915: Run pre-flight checks to catch environmental issues early
 	// Skip when using mock backends in tests (skipPreflightChecks flag)
 	// GH-1002: Skip git_clean check when worktree isolation is enabled
+	// LocalMode: skip git_clean — bench containers have pre-existing files that
+	// create dirty git state after our install script commits.
 	if !r.skipPreflightChecks {
 		preflightOpts := PreflightOptions{
-			SkipGitClean: r.config != nil && r.config.UseWorktree,
+			SkipGitClean: task.LocalMode || (r.config != nil && r.config.UseWorktree),
 			BackendType:  r.backendType(),
 		}
 		if err := RunPreflightChecksWithOptions(ctx, executionPath, preflightOpts); err != nil {
@@ -1194,8 +1196,17 @@ func (r *Runner) executeWithOptions(ctx context.Context, task *Task, allowWorktr
 		}
 	}
 
-	// Apply timeout based on task complexity
+	// Apply timeout based on task complexity.
+	// LocalMode: override to complex timeout (60m minimum) since bench tasks
+	// can't be reliably classified from short descriptions alone. A "trivial"
+	// classification giving 15m timeout caused filter-js-from-html to fail.
 	timeout := r.modelRouter.SelectTimeout(task)
+	if task.LocalMode {
+		complexTimeout := r.modelRouter.GetTimeoutForComplexity(ComplexityComplex)
+		if timeout < complexTimeout {
+			timeout = complexTimeout
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
