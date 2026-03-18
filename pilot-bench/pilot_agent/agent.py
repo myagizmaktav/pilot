@@ -198,9 +198,9 @@ executor:
     complex: 60m
   effort_routing:
     enabled: true
-    trivial: max
-    simple: max
-    medium: max
+    trivial: low
+    simple: medium
+    medium: high
     complex: max
   effort_classifier:
     enabled: false
