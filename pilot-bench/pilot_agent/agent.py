@@ -63,6 +63,17 @@ class PilotAgent(BaseInstalledAgent):
             env={
                 **env,
                 "IS_SANDBOX": "1",
+                # 128K output tokens — default 32K kills complex tasks mid-thinking
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+                # Default max effort — Pilot overrides per-task via 'env' prefix
+                # in backend_claudecode.go. Note: Claude Code has a bug where
+                # effort levels other than "max" trigger TypeError: A.with is
+                # not a function (Array.with() unsupported in container Node.js)
+                "CLAUDE_CODE_EFFORT_LEVEL": "max",
+                # 1M context window: enabled by default since Claude Code v2.1.75
+                # (March 2026). Gives competitive advantage — compaction at 835K vs
+                # 180K means agent keeps full conversation through complex tasks.
+                # To disable: "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
             },
             timeout_sec=MAIN_TIMEOUT,
         )]
@@ -114,6 +125,8 @@ class PilotAgent(BaseInstalledAgent):
                         continue
                     try:
                         event = json.loads(line)
+                        if not isinstance(event, dict):
+                            continue
                         usage = event.get("usage", {})
                         if usage:
                             total_input += usage.get("input_tokens", 0)
@@ -190,13 +203,9 @@ executor:
     medium: high
     complex: high
   effort_classifier:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    timeout: 30s
+    enabled: false
   intent_judge:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    max_diff_chars: 8000
+    enabled: false
   retry:
     enabled: true
     rate_limit:
@@ -224,6 +233,10 @@ quality:
       max_retries: 2
       retry_delay: 5s
       failure_hint: "Tests failed. Read /tests/test_outputs.py to understand what is expected, then fix your implementation."
+memory:
+  path: /root/.pilot/data
+  learning:
+    enabled: true
 """
 
     async def setup(self, environment) -> None:
@@ -253,6 +266,16 @@ quality:
         await environment.exec(
             command=f"mkdir -p /root/.pilot && cat > /root/.pilot/config.yaml << 'CFGEOF'\n{config}CFGEOF",
         )
+
+        # Upload pre-seeded learning DB (curated patterns from bench failure analysis)
+        db_path = Path(__file__).parent / "data" / "pilot.db"
+        if db_path.exists():
+            await environment.exec(command="mkdir -p /root/.pilot/data")
+            await environment.upload_file(
+                source_path=db_path,
+                target_path="/root/.pilot/data/pilot.db",
+            )
+            logger.info("Uploaded pre-seeded learning DB to /root/.pilot/data/pilot.db")
 
         # Upload test files for test-aware prompting
         # Pilot's prompt builder can read /tests/ if it exists

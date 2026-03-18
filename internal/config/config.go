@@ -498,11 +498,11 @@ func expandPath(path string) string {
 }
 
 // validEffortLevels are the effort levels supported by Claude Code CLI.
-// Note: "max" is NOT supported for Claude.ai subscribers.
 var validEffortLevels = map[string]bool{
 	"low":    true,
 	"medium": true,
 	"high":   true,
+	"max":    true,
 	"":       true, // Empty uses default
 }
 
@@ -530,7 +530,7 @@ func (c *Config) Validate() error {
 		for name, value := range levels {
 			normalized := strings.ToLower(strings.TrimSpace(value))
 			if !validEffortLevels[normalized] {
-				return fmt.Errorf("invalid effort_routing.%s: %q (must be low, medium, or high; 'max' is not supported by Claude Code)", name, value)
+				return fmt.Errorf("invalid effort_routing.%s: %q (must be low, medium, high, or max)", name, value)
 			}
 		}
 	}

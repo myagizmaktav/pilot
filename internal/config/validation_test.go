@@ -39,7 +39,7 @@ func TestConfig_Validate_EffortRouting(t *testing.T) {
 			name: "disabled routing skips validation",
 			effort: &executor.EffortRoutingConfig{
 				Enabled: false,
-				Complex: "max", // Invalid but disabled
+				Complex: "extreme", // Invalid but disabled
 			},
 			wantErr: false,
 		},
@@ -66,7 +66,7 @@ func TestConfig_Validate_EffortRouting(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "max is invalid",
+			name: "max is valid",
 			effort: &executor.EffortRoutingConfig{
 				Enabled: true,
 				Trivial: "low",
@@ -74,8 +74,7 @@ func TestConfig_Validate_EffortRouting(t *testing.T) {
 				Medium:  "high",
 				Complex: "max",
 			},
-			wantErr:   true,
-			errSubstr: "effort_routing.complex",
+			wantErr: false,
 		},
 		{
 			name: "invalid trivial",
@@ -178,8 +177,8 @@ func TestConfig_Validate_Projects(t *testing.T) {
 }
 
 func TestValidEffortLevels(t *testing.T) {
-	valid := []string{"low", "medium", "high", ""}
-	invalid := []string{"max", "super", "extreme", "none", "default"}
+	valid := []string{"low", "medium", "high", "max", ""}
+	invalid := []string{"super", "extreme", "none", "default"}
 
 	for _, v := range valid {
 		if !validEffortLevels[v] {
