@@ -198,10 +198,10 @@ executor:
     complex: 60m
   effort_routing:
     enabled: true
-    trivial: low
-    simple: medium
-    medium: high
-    complex: high
+    trivial: max
+    simple: max
+    medium: max
+    complex: max
   effort_classifier:
     enabled: false
   intent_judge:
