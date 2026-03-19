@@ -30,7 +30,7 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
             ;;
         *)
             if command -v curl &> /dev/null; then
-                curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
                 apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm
             else
                 echo "ERROR: Cannot install Node.js"
@@ -40,26 +40,11 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
     esac
 fi
 
-# Upgrade Node.js if too old (Claude Code needs 18+)
-NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
-if [ "$NODE_MAJOR" -lt 18 ] 2>/dev/null; then
-    echo "Node.js $NODE_MAJOR is too old, upgrading to 20..."
-    case "$OS_ID" in
-        ubuntu|debian)
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-            apt-get install -y nodejs
-            ;;
-        *)
-            npm install -g n && n 20 || true
-            ;;
-    esac
-fi
-
 echo "Node version: $(node --version)"
 
-# Install Claude Code CLI
+# Install Claude Code CLI (pinned — 2.1.78+ has TypeError regression)
 echo "Installing Claude Code CLI..."
-npm install -g @anthropic-ai/claude-code@latest 2>&1
+npm install -g @anthropic-ai/claude-code@2.1.74 2>&1
 
 if ! command -v claude &> /dev/null; then
     export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"
