@@ -326,22 +326,32 @@ func (r *Runner) buildLocalModePrompt(task *Task) string {
 }
 
 // buildRetryPrompt constructs a prompt for Claude Code to fix quality gate failures.
-// It includes the original task context and the specific error feedback to address.
+// Includes git diff context and explicit strategy-switch instruction to avoid
+// repeating the same failed approach (GH-bench: ALGORITHM_VARIANCE fix).
 func (r *Runner) buildRetryPrompt(task *Task, feedback string, attempt int) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("## Quality Gate Retry (Attempt %d)\n\n", attempt))
-	sb.WriteString("The previous implementation attempt failed quality gates. Please fix the issues below.\n\n")
+	sb.WriteString("Your PREVIOUS approach FAILED. Do NOT retry the same strategy.\n\n")
+
+	sb.WriteString("## What Failed\n\n")
 	sb.WriteString(feedback)
 	sb.WriteString("\n\n")
-	sb.WriteString("## Original Task Context\n\n")
-	sb.WriteString(fmt.Sprintf("Task: %s\n", task.ID))
-	sb.WriteString(fmt.Sprintf("Title: %s\n\n", task.Title))
+
+	sb.WriteString("## What You Previously Tried\n\n")
+	sb.WriteString("Check `git diff HEAD~1` and `git log --oneline -3` to see your previous changes.\n")
+	sb.WriteString("Your previous approach was WRONG. Delete it and start over with a completely different algorithm.\n\n")
+
+	sb.WriteString("## Original Task\n\n")
+	sb.WriteString(task.Description)
+	sb.WriteString("\n\n")
+
 	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("1. Review the error output above carefully\n")
-	sb.WriteString("2. Fix the issues in the affected files\n")
-	sb.WriteString("3. Ensure all tests pass\n")
-	sb.WriteString("4. Commit your fixes with a descriptive message\n\n")
+	sb.WriteString("1. Run `git diff HEAD~1` to see what you tried before\n")
+	sb.WriteString("2. DELETE your previous approach entirely\n")
+	sb.WriteString("3. Implement a COMPLETELY DIFFERENT solution\n")
+	sb.WriteString("4. Run tests to verify: `cd /app && python3 -m pytest /tests/test_outputs.py -v`\n")
+	sb.WriteString("5. If tests pass, STOP.\n\n")
 	sb.WriteString("Work autonomously. Do not ask for confirmation.\n")
 
 	return sb.String()
