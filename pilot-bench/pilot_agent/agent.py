@@ -64,7 +64,7 @@ class PilotAgent(BaseInstalledAgent):
                 **env,
                 "IS_SANDBOX": "1",
                 # 128K output tokens — default 32K kills complex tasks mid-thinking
-                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
                 # Effort level controlled by Pilot's --effort flag from routing config.
                 # Do NOT set CLAUDE_CODE_EFFORT_LEVEL — it overrides routing.
                 # 1M context window: enabled by default since Claude Code v2.1.75
