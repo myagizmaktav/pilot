@@ -65,11 +65,8 @@ class PilotAgent(BaseInstalledAgent):
                 "IS_SANDBOX": "1",
                 # 128K output tokens — default 32K kills complex tasks mid-thinking
                 "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
-                # Default max effort — Pilot overrides per-task via 'env' prefix
-                # in backend_claudecode.go. Note: Claude Code has a bug where
-                # effort levels other than "max" trigger TypeError: A.with is
-                # not a function (Array.with() unsupported in container Node.js)
-                "CLAUDE_CODE_EFFORT_LEVEL": "max",
+                # Effort level controlled by Pilot's --effort flag from routing config.
+                # Do NOT set CLAUDE_CODE_EFFORT_LEVEL — it overrides routing.
                 # 1M context window: enabled by default since Claude Code v2.1.75
                 # (March 2026). Gives competitive advantage — compaction at 835K vs
                 # 180K means agent keeps full conversation through complex tasks.
