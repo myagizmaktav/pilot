@@ -285,49 +285,42 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) string {
 // buildLocalModePrompt constructs a problem-solving prompt for local execution (GH-2103).
 // It skips Navigator workflow, PR constraints, and project context injection.
 // Designed for `pilot task --local` where the goal is direct problem-solving.
-// v10: test-first emphasis, tighter timebox, format matching, diagnostic patterns.
+// v9: proven baseline from v5m (68.5%).
 func (r *Runner) buildLocalModePrompt(task *Task) string {
 	var sb strings.Builder
 
-	sb.WriteString("## Task\n\n")
-	sb.WriteString(task.Description)
-	sb.WriteString("\n\n")
+	sb.WriteString(fmt.Sprintf("## Task\n\n%s\n\n", task.Description))
 
-	sb.WriteString("## CRITICAL: Read Tests First\n\n")
-	sb.WriteString("BEFORE writing ANY code:\n")
-	sb.WriteString("1. Run `ls /tests/` and `ls /app/` to see all available files\n")
-	sb.WriteString("2. If `/tests/test_outputs.py` exists, read it COMPLETELY — it defines EXACTLY what passes\n")
-	sb.WriteString("3. Read ALL files in /app/ — understand inputs, existing code, expected outputs\n")
-	sb.WriteString("4. Identify the EXACT output format, file paths, and function signatures the tests expect\n\n")
+	sb.WriteString("## FIRST: Check for test files\n\n")
+	sb.WriteString("BEFORE doing anything else, check if `/tests/test_outputs.py` exists. If it does, read it — it contains the exact validation logic and expected outputs that will be used to grade your work. This is the single most important step.\n\n")
 
 	sb.WriteString("## Environment\n\n")
-	sb.WriteString("Pre-installed: numpy, git, curl, wget, jq, gcc, make, uv, uvx\n")
-	sb.WriteString("Often available: torch, scipy, pandas, scikit-learn (check with `python3 -c 'import X'` before installing)\n")
-	sb.WriteString("If torch needed: `pip install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu`\n")
-	sb.WriteString("Memory limit: ~2GB. Avoid downloading large model weights or datasets.\n\n")
+	sb.WriteString("Pre-installed:\n")
+	sb.WriteString("- Python: numpy\n")
+	sb.WriteString("- System: git, curl, wget, jq, gcc, make\n")
+	sb.WriteString("- Tools: uv, uvx (at /usr/local/bin/)\n")
+	sb.WriteString("Many task containers also have torch, scipy, pandas pre-installed in their Docker image. Check before installing.\n")
+	sb.WriteString("If you need torch and it's not available, install CPU-only: `pip install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu`\n\n")
 
-	sb.WriteString("## Execution Strategy\n\n")
-	sb.WriteString("1. **Read tests + all files** (first 2 minutes): Understand EXACTLY what output is expected\n")
-	sb.WriteString("2. **Implement simplest solution** (next 10 minutes): Write the minimum code that passes tests. Brute force > elegance.\n")
-	sb.WriteString("3. **Run tests**: `cd /app && uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -v 2>&1`\n")
-	sb.WriteString("4. **If tests fail**: Read the error carefully. Fix and re-run. Try a COMPLETELY different approach if stuck.\n")
-	sb.WriteString("5. **If tests pass**: STOP IMMEDIATELY. Do not refactor, summarize, or optimize.\n\n")
+	sb.WriteString("## Execution Steps\n\n")
+	sb.WriteString("1. **Read everything first**: Read all files in the working directory AND test files. Understand what exists, what's expected, and what format outputs need.\n")
+	sb.WriteString("2. **Plan briefly**: Identify the simplest path to passing tests. Check what packages are available before installing.\n")
+	sb.WriteString("3. **Write output early**: Produce required output file(s) as soon as possible — partial progress beats no output.\n")
+	sb.WriteString("4. **Iterate on failures**: If something doesn't work, try a different approach. Write scripts for analysis rather than reasoning through complex data manually.\n")
+	sb.WriteString("5. **Self-verify**: Run `cd /app && python3 -m pytest /tests/test_outputs.py -v` before finishing. Fix any failures. If tests pass, STOP.\n\n")
 
-	sb.WriteString("## When Stuck\n\n")
-	sb.WriteString("- If your approach isn't working after 15 minutes, DELETE it and start over with a different algorithm\n")
-	sb.WriteString("- If a package install fails or is too large, find an alternative that doesn't need it\n")
-	sb.WriteString("- If you hit memory errors, simplify: use smaller data types, process in chunks, or reduce scope\n")
-	sb.WriteString("- If tests check file content, match the EXACT format — whitespace, newlines, encoding all matter\n")
-	sb.WriteString("- Write diagnostic scripts: `python3 -c 'print(open(\"/app/output.txt\").read()[:200])'` to inspect outputs\n\n")
+	sb.WriteString("## Action Bias\n\n")
+	sb.WriteString("- Start writing code within the first 5 minutes. Do NOT spend extended time thinking.\n")
+	sb.WriteString("- A working brute-force solution beats a perfect approach you never implement.\n")
+	sb.WriteString("- If stuck after 15 minutes on one approach, switch to a completely different strategy.\n")
+	sb.WriteString("- Once tests pass, STOP IMMEDIATELY. No summaries, no cleanup, no additional analysis.\n\n")
 
 	sb.WriteString("## Rules\n\n")
-	sb.WriteString("- Work autonomously — NEVER ask for confirmation or input\n")
-	sb.WriteString("- Check existing packages before installing: `python3 -c 'import X'`\n")
-	sb.WriteString("- Always use `--break-system-packages` with pip\n")
-	sb.WriteString("- Run tests BEFORE saying you're done — untested code fails\n")
-	sb.WriteString("- If build fails, install missing deps: `apt-get install -y <package>`\n")
-	sb.WriteString("- NEVER retry the same failing approach — switch strategies\n")
-	sb.WriteString("- Start coding within 2 minutes. Thinking without code is wasted time.\n")
+	sb.WriteString("- Work autonomously — never ask for confirmation\n")
+	sb.WriteString("- Check if packages exist before installing (`python3 -c 'import X'`) — many are pre-installed\n")
+	sb.WriteString("- Use `--break-system-packages` with pip when installing\n")
+	sb.WriteString("- If a build fails, check error for missing deps — usually available via `apt-get install`\n")
+	sb.WriteString("- If something fails, try a DIFFERENT approach — don't retry the same thing\n")
 
 	return sb.String()
 }
