@@ -2075,10 +2075,9 @@ The previous execution completed but made no code changes. This task requires ac
 		// Track if quality gates passed for self-review decision (GH-1079)
 		qualityGatesPassed := false
 
-		// Run quality gates if configured.
-		// LocalMode tasks (bench/sandbox) also benefit from quality gate retries —
-		// the test gate catches wrong output and gives the agent a second chance.
-		if r.qualityCheckerFactory != nil {
+		// Run quality gates if configured (skip in LocalMode — retries consume
+		// memory/time in 2GB containers, net negative per v25 data).
+		if r.qualityCheckerFactory != nil && !task.LocalMode {
 			const maxAutoRetries = 2 // Circuit breaker to prevent infinite loops
 
 			// Track quality gate results across retries (GH-209)
