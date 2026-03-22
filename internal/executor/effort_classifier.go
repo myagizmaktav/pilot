@@ -118,6 +118,17 @@ func (c *EffortClassifier) Classify(ctx context.Context, task *Task) string {
 		c.mu.Unlock()
 	}
 
+	// GH-bench: Skip classifier for short tasks to avoid OOM from subprocess.
+	// Short descriptions = simpler tasks = default to medium without spawning CC.
+	descLen := len(task.Title) + len(task.Description)
+	if descLen < 500 {
+		c.log.Info("Skipping LLM classifier for short task, defaulting to medium",
+			slog.String("task_id", task.ID),
+			slog.Int("desc_len", descLen),
+		)
+		return "medium"
+	}
+
 	// Call Claude Code subprocess
 	result, strategy, err := c.classify(ctx, task)
 	if err != nil {
