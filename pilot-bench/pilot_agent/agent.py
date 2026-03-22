@@ -198,7 +198,7 @@ executor:
     trivial: low
     simple: medium
     medium: high
-    complex: max
+    complex: high
   effort_classifier:
     enabled: true
     model: claude-haiku-4-5-20251001
