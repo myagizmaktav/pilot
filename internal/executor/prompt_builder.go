@@ -27,11 +27,6 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) string {
 	// ignoring --local flag entirely.
 	if task.LocalMode {
 		prompt := r.buildLocalModePrompt(task)
-		// GH-bench: Inject strategy hint from effort classifier (pre-analysis)
-		if strategy := r.modelRouter.GetTaskStrategy(task.ID); strategy != "" {
-			prompt += "\n\n## Strategy Hint\n\nA pre-analysis suggests: " + strategy + "\n"
-			slog.Info("Injected strategy hint", slog.String("task_id", task.ID), slog.String("strategy", strategy))
-		}
 		// GH-2147: Inject learned patterns (keep prompt lean)
 		if r.patternContext != nil {
 			injected, err := r.patternContext.InjectPatterns(
