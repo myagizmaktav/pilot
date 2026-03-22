@@ -198,6 +198,15 @@ func (r *ModelRouter) SetEffortClassifier(c *EffortClassifier) {
 	r.effortClassifier = c
 }
 
+// GetTaskStrategy returns the cached strategy hint for a task from the effort classifier.
+// Returns empty string if classifier is not set, task wasn't classified, or no strategy available.
+func (r *ModelRouter) GetTaskStrategy(taskID string) string {
+	if r.effortClassifier == nil {
+		return ""
+	}
+	return r.effortClassifier.GetStrategy(taskID)
+}
+
 // SetOutcomeTracker attaches an outcome tracker for failure-rate-based model escalation (GH-1991).
 func (r *ModelRouter) SetOutcomeTracker(t *memory.ModelOutcomeTracker) {
 	r.outcomeTracker = t
