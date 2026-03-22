@@ -200,9 +200,7 @@ executor:
     medium: high
     complex: high
   effort_classifier:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    timeout: 30s
+    enabled: false
   intent_judge:
     enabled: false
   retry:
