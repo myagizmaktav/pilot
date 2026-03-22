@@ -10,8 +10,8 @@ import (
 // ClassificationSchema for complexity classifier
 const ClassificationSchema = `{"type":"object","properties":{"complexity":{"type":"string","enum":["TRIVIAL","SIMPLE","MEDIUM","COMPLEX","EPIC"]},"reason":{"type":"string"}},"required":["complexity","reason"]}`
 
-// EffortSchema for effort classifier
-const EffortSchema = `{"type":"object","properties":{"effort":{"type":"string","enum":["low","medium","high"]},"reason":{"type":"string"}},"required":["effort","reason"]}`
+// EffortSchema for effort classifier + strategy analyzer
+const EffortSchema = `{"type":"object","properties":{"effort":{"type":"string","enum":["low","medium","high"]},"reason":{"type":"string"},"strategy":{"type":"string"}},"required":["effort","reason","strategy"]}`
 
 // PostExecutionSummarySchema for branch/SHA/files extraction
 const PostExecutionSummarySchema = `{"type":"object","properties":{"branch_name":{"type":"string"},"commit_sha":{"type":"string"},"files_changed":{"type":"array","items":{"type":"string"}},"summary":{"type":"string"}},"required":["branch_name","commit_sha"]}`

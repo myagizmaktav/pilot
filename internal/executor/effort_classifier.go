@@ -200,8 +200,7 @@ func (c *EffortClassifier) classify(ctx context.Context, task *Task) (string, st
 	}
 
 	if c.useStructuredOutput {
-		effort, err := parseStructuredEffortResponse(output)
-		return effort, "", err // structured output doesn't include strategy yet
+		return parseStructuredEffortResponse(output)
 	}
 	return parseEffortResponseWithStrategy(string(output))
 }
@@ -251,23 +250,23 @@ func parseEffortResponseWithStrategy(text string) (string, string, error) {
 	}
 }
 
-// parseStructuredEffortResponse extracts effort level from Claude Code's structured JSON output.
-func parseStructuredEffortResponse(jsonResponse []byte) (string, error) {
+// parseStructuredEffortResponse extracts effort level and strategy from Claude Code's structured JSON output.
+func parseStructuredEffortResponse(jsonResponse []byte) (string, string, error) {
 	structuredOutput, err := extractStructuredOutput(jsonResponse)
 	if err != nil {
-		return "", fmt.Errorf("extract structured output: %w", err)
+		return "", "", fmt.Errorf("extract structured output: %w", err)
 	}
 
 	var resp effortClassificationResponse
 	if err := json.Unmarshal(structuredOutput, &resp); err != nil {
-		return "", fmt.Errorf("parse structured effort: %w", err)
+		return "", "", fmt.Errorf("parse structured effort: %w", err)
 	}
 
 	effort := strings.ToLower(resp.Effort)
 	switch effort {
 	case "low", "medium", "high":
-		return effort, nil
+		return effort, resp.Strategy, nil
 	default:
-		return "", fmt.Errorf("unknown effort level: %q", resp.Effort)
+		return "", "", fmt.Errorf("unknown effort level: %q", resp.Effort)
 	}
 }
