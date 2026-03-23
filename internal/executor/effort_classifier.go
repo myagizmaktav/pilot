@@ -29,27 +29,24 @@ type EffortClassifier struct {
 	// Can be overridden for testing.
 	cmdRunner func(ctx context.Context, args ...string) ([]byte, error)
 
-	mu            sync.Mutex
-	cache         map[string]string // task ID → cached effort level
-	strategyCache map[string]string // task ID → cached strategy hint
+	mu    sync.Mutex
+	cache map[string]string // task ID → cached effort level
 }
 
 // effortClassificationResponse is the JSON structure returned by the LLM.
 type effortClassificationResponse struct {
-	Effort   string `json:"effort"`
-	Reason   string `json:"reason"`
-	Strategy string `json:"strategy,omitempty"` // GH-bench: approach hint for the agent
+	Effort string `json:"effort"`
+	Reason string `json:"reason"`
 }
 
-const effortClassifierSystemPrompt = `You are a task analyzer for an AI coding agent pipeline. You do two things:
+const effortClassifierSystemPrompt = `You are an effort classifier for a software development pipeline. Classify the given issue into exactly one effort level.
 
-1. CLASSIFY EFFORT — how much thinking the agent needs
-2. SUGGEST STRATEGY — a brief hint about the best approach
+Effort levels control how many tokens Claude uses when responding — trading off between thoroughness and efficiency.
 
-Effort levels control how many tokens the agent uses:
-- LOW: Straightforward, mechanical tasks. No ambiguity.
-- MEDIUM: Standard work with clear requirements.
-- HIGH: Tasks requiring careful analysis or multiple considerations.
+Levels:
+- LOW: Straightforward, mechanical tasks. No ambiguity. Examples: typos, log additions, renames, config tweaks.
+- MEDIUM: Standard work with clear requirements. Examples: add a field, implement a well-defined endpoint, write tests for existing code.
+- HIGH: Tasks requiring careful analysis or multiple considerations. Examples: refactors, debugging subtle issues, implementing features with security implications.
 
 Decision factors (ranked by importance):
 1. Ambiguity → higher effort (unclear requirements need more reasoning)
@@ -57,15 +54,10 @@ Decision factors (ranked by importance):
 3. Scope (multi-file, cross-system) → higher effort (coordination needed)
 4. Clear step-by-step instructions → lower effort (even if detailed)
 
-IMPORTANT: A detailed issue with clear instructions is NOT automatically high effort.
-
-For strategy, provide a ONE-SENTENCE hint about the best technical approach. Focus on:
-- What algorithm or technique to use first
-- What to check or read before coding
-- What common pitfall to avoid
+IMPORTANT: A detailed issue with clear instructions is NOT automatically high effort. If the path is clear, use MEDIUM or LOW regardless of description length.
 
 Respond with ONLY a JSON object (no markdown, no explanation):
-{"effort": "low|medium|high", "reason": "brief explanation", "strategy": "one-sentence approach hint"}`
+{"effort": "low|medium|high", "reason": "brief one-sentence explanation"}`
 
 // NewEffortClassifier creates a classifier that uses ` + "`claude --print`" + ` subprocess.
 // Uses the user's existing Claude Code subscription - no separate API key needed.
@@ -77,7 +69,6 @@ func NewEffortClassifier() *EffortClassifier {
 		cache:   make(map[string]string),
 	}
 	c.cmdRunner = c.defaultCmdRunner
-	c.strategyCache = make(map[string]string)
 	return c
 }
 
@@ -118,19 +109,8 @@ func (c *EffortClassifier) Classify(ctx context.Context, task *Task) string {
 		c.mu.Unlock()
 	}
 
-	// GH-bench: Skip classifier for short tasks to avoid OOM from subprocess.
-	// Short descriptions = simpler tasks = default to medium without spawning CC.
-	descLen := len(task.Title) + len(task.Description)
-	if descLen < 500 {
-		c.log.Info("Skipping LLM classifier for short task, defaulting to medium",
-			slog.String("task_id", task.ID),
-			slog.Int("desc_len", descLen),
-		)
-		return "medium"
-	}
-
 	// Call Claude Code subprocess
-	result, strategy, err := c.classify(ctx, task)
+	result, err := c.classify(ctx, task)
 	if err != nil {
 		c.log.Warn("LLM effort classification failed, falling back to static mapping",
 			slog.String("task_id", task.ID),
@@ -143,9 +123,6 @@ func (c *EffortClassifier) Classify(ctx context.Context, task *Task) string {
 	if task.ID != "" {
 		c.mu.Lock()
 		c.cache[task.ID] = result
-		if strategy != "" {
-			c.strategyCache[task.ID] = strategy
-		}
 		c.mu.Unlock()
 	}
 
@@ -157,16 +134,8 @@ func (c *EffortClassifier) Classify(ctx context.Context, task *Task) string {
 	return result
 }
 
-// GetStrategy returns the cached strategy hint for a task, if available.
-func (c *EffortClassifier) GetStrategy(taskID string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.strategyCache[taskID]
-}
-
 // classify calls Claude Code subprocess with Haiku model and parses the response.
-// Returns effort level and strategy hint.
-func (c *EffortClassifier) classify(ctx context.Context, task *Task) (string, string, error) {
+func (c *EffortClassifier) classify(ctx context.Context, task *Task) (string, error) {
 	userContent := fmt.Sprintf("## Issue Title\n%s\n\n## Issue Description\n%s", task.Title, task.Description)
 
 	// Truncate to avoid token overflow (description can be very long)
@@ -203,17 +172,18 @@ func (c *EffortClassifier) classify(ctx context.Context, task *Task) (string, st
 
 	output, err := c.cmdRunner(ctx, args...)
 	if err != nil {
-		return "", "", fmt.Errorf("claude command failed: %w", err)
+		return "", fmt.Errorf("claude command failed: %w", err)
 	}
 
 	if len(output) == 0 {
-		return "", "", fmt.Errorf("empty response from claude")
+		return "", fmt.Errorf("empty response from claude")
 	}
 
 	if c.useStructuredOutput {
 		return parseStructuredEffortResponse(output)
+	} else {
+		return parseEffortResponse(string(output))
 	}
-	return parseEffortResponseWithStrategy(string(output))
 }
 
 // parseEffortResponse extracts effort level from the LLM's JSON response.
@@ -239,45 +209,23 @@ func parseEffortResponse(text string) (string, error) {
 	}
 }
 
-// parseEffortResponseWithStrategy extracts effort level AND strategy hint from the LLM's JSON response.
-func parseEffortResponseWithStrategy(text string) (string, string, error) {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-
-	var resp effortClassificationResponse
-	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		return "", "", fmt.Errorf("parse effort JSON: %w (raw: %s)", err, text)
-	}
-
-	effort := strings.ToLower(resp.Effort)
-	switch effort {
-	case "low", "medium", "high":
-		return effort, resp.Strategy, nil
-	default:
-		return "", "", fmt.Errorf("unknown effort level: %q", resp.Effort)
-	}
-}
-
-// parseStructuredEffortResponse extracts effort level and strategy from Claude Code's structured JSON output.
-func parseStructuredEffortResponse(jsonResponse []byte) (string, string, error) {
+// parseStructuredEffortResponse extracts effort level from Claude Code's structured JSON output.
+func parseStructuredEffortResponse(jsonResponse []byte) (string, error) {
 	structuredOutput, err := extractStructuredOutput(jsonResponse)
 	if err != nil {
-		return "", "", fmt.Errorf("extract structured output: %w", err)
+		return "", fmt.Errorf("extract structured output: %w", err)
 	}
 
 	var resp effortClassificationResponse
 	if err := json.Unmarshal(structuredOutput, &resp); err != nil {
-		return "", "", fmt.Errorf("parse structured effort: %w", err)
+		return "", fmt.Errorf("parse structured effort: %w", err)
 	}
 
 	effort := strings.ToLower(resp.Effort)
 	switch effort {
 	case "low", "medium", "high":
-		return effort, resp.Strategy, nil
+		return effort, nil
 	default:
-		return "", "", fmt.Errorf("unknown effort level: %q", resp.Effort)
+		return "", fmt.Errorf("unknown effort level: %q", resp.Effort)
 	}
 }
