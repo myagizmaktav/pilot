@@ -270,8 +270,8 @@ func (c *EffortClassifier) classifyViaAPI(ctx context.Context, task *Task) (stri
 	return parseEffortResponse(text)
 }
 
-// classifyViaSubprocess calls Claude Code subprocess with Haiku model (legacy mode).
-// Uses ~300MB memory for the Node.js + CC runtime.
+// classifyViaSubprocess calls Claude Code subprocess with Haiku model.
+// Uses --bare flag (CC 2.1.81+) to skip hooks/LSP/plugins for lighter memory.
 func (c *EffortClassifier) classifyViaSubprocess(ctx context.Context, task *Task) (string, error) {
 	userContent := fmt.Sprintf("## Issue Title\n%s\n\n## Issue Description\n%s", task.Title, task.Description)
 
@@ -288,11 +288,13 @@ func (c *EffortClassifier) classifyViaSubprocess(ctx context.Context, task *Task
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	// Call claude --print with Haiku model
+	// Call claude --print --bare with Haiku model
+	// --bare (CC 2.1.81+): skips hooks, LSP, plugin sync = lighter memory
 	var args []string
 	if c.useStructuredOutput {
 		args = []string{
 			"--print",
+			"--bare",
 			"-p", prompt,
 			"--model", c.model,
 			"--output-format", "json",
@@ -301,6 +303,7 @@ func (c *EffortClassifier) classifyViaSubprocess(ctx context.Context, task *Task
 	} else {
 		args = []string{
 			"--print",
+			"--bare",
 			"-p", prompt,
 			"--model", c.model,
 			"--output-format", "text",
