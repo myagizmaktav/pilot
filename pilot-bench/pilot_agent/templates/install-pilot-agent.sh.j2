@@ -44,7 +44,7 @@ echo "Node version: $(node --version)"
 
 # Install Claude Code CLI (pinned — 2.1.78+ has TypeError regression)
 echo "Installing Claude Code CLI..."
-npm install -g @anthropic-ai/claude-code@2.1.81 2>&1
+npm install -g @anthropic-ai/claude-code@2.1.74 2>&1
 
 if ! command -v claude &> /dev/null; then
     export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"

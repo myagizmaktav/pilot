@@ -294,7 +294,7 @@ func (c *EffortClassifier) classifyViaSubprocess(ctx context.Context, task *Task
 	if c.useStructuredOutput {
 		args = []string{
 			"--print",
-			"--bare",
+			// "--bare", // requires CC 2.1.81+
 			"-p", prompt,
 			"--model", c.model,
 			"--output-format", "json",
@@ -303,7 +303,7 @@ func (c *EffortClassifier) classifyViaSubprocess(ctx context.Context, task *Task
 	} else {
 		args = []string{
 			"--print",
-			"--bare",
+			// "--bare", // requires CC 2.1.81+
 			"-p", prompt,
 			"--model", c.model,
 			"--output-format", "text",
