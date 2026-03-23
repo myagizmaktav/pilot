@@ -226,11 +226,7 @@ func (r *ModelRouter) SelectEffort(task *Task) string {
 		if effort := r.effortClassifier.Classify(context.Background(), task); effort != "" {
 			return effort
 		}
-		// LLM failed — default to medium to avoid OOM from high effort.
-		// The classifier OOMs or times out on ~7% of tasks; falling back to
-		// the heuristic (84% → complex → high) causes those tasks to OOM too.
-		// Medium is safe: 80% pass rate vs 61% for high (v24 data).
-		return "medium"
+		// LLM failed, fall through to static mapping
 	}
 
 	// Static complexity-based fallback
