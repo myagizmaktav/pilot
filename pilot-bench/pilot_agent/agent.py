@@ -202,7 +202,7 @@ executor:
   effort_classifier:
     enabled: true
     model: claude-haiku-4-5-20251001
-    timeout: 10s
+    timeout: 30s
   intent_judge:
     enabled: false
   retry:
