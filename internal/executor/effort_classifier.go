@@ -80,7 +80,11 @@ func NewEffortClassifier() *EffortClassifier {
 	c.cmdRunner = c.defaultCmdRunner
 
 	// Auto-detect API key from environment for direct API mode
-	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
+	// PILOT_CLASSIFIER_API_KEY is checked first — dedicated key for classifier only.
+	// Falls back to ANTHROPIC_API_KEY, then OAuth token.
+	// IMPORTANT: Don't pass ANTHROPIC_API_KEY to container if CC should use OAuth
+	// subscription — CC auto-detects ANTHROPIC_API_KEY and bills to it instead.
+	for _, key := range []string{"PILOT_CLASSIFIER_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} {
 		if v := os.Getenv(key); v != "" {
 			c.apiKey = v
 			c.log.Info("Effort classifier using direct API mode", slog.String("auth_source", key))
