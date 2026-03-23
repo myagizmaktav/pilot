@@ -195,14 +195,12 @@ executor:
     complex: 60m
   effort_routing:
     enabled: true
-    trivial: low
+    trivial: medium
     simple: medium
-    medium: high
-    complex: high
+    medium: medium
+    complex: medium
   effort_classifier:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    timeout: 30s
+    enabled: false
   intent_judge:
     enabled: false
   retry:
