@@ -65,6 +65,8 @@ Decision factors (ranked by importance):
 
 IMPORTANT: A detailed issue with clear instructions is NOT automatically high effort. If the path is clear, use MEDIUM or LOW regardless of description length.
 
+BIAS: When uncertain between MEDIUM and HIGH, prefer MEDIUM. Most tasks perform better with MEDIUM effort in memory-constrained environments. Only use HIGH for tasks with genuine security risks or multi-system coordination.
+
 Respond with ONLY a JSON object (no markdown, no explanation):
 {"effort": "low|medium|high", "reason": "brief one-sentence explanation"}`
 
