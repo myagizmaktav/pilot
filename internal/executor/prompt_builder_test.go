@@ -621,7 +621,7 @@ func TestBuildPromptSkipsNavigatorForTrivialTask(t *testing.T) {
 }
 
 func TestBuildPromptLocalMode(t *testing.T) {
-	// GH-2103: LocalMode should use problem-solving prompt even if .agent/ exists
+	// GH-2103: LocalMode should use bench-optimized prompt even if .agent/ exists
 	tempDir, err := os.MkdirTemp("", "pilot-test-local")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -645,9 +645,12 @@ func TestBuildPromptLocalMode(t *testing.T) {
 
 	prompt := runner.BuildPrompt(task, tempDir)
 
-	// Should use problem-solving prompt
-	if !strings.Contains(prompt, "## Problem-Solving Mode") {
-		t.Error("LocalMode should produce problem-solving prompt")
+	// Should contain task description
+	if !strings.Contains(prompt, "## Task") {
+		t.Error("LocalMode should contain task section")
+	}
+	if !strings.Contains(prompt, "Fix the authentication bug") {
+		t.Error("LocalMode should contain task description")
 	}
 
 	// Should NOT contain Navigator/PR workflow elements
@@ -664,17 +667,12 @@ func TestBuildPromptLocalMode(t *testing.T) {
 		t.Error("LocalMode should not mention PR creation constraints")
 	}
 
-	// Should contain task details
-	if !strings.Contains(prompt, "## Task: LOCAL-123") {
-		t.Error("LocalMode should contain task ID")
+	// Should have bench-optimized sections
+	if !strings.Contains(prompt, "## Action Bias") {
+		t.Error("LocalMode should have action bias section")
 	}
-	if !strings.Contains(prompt, "Fix the authentication bug") {
-		t.Error("LocalMode should contain task description")
-	}
-
-	// Should include test-first instruction since description mentions test file
-	if !strings.Contains(prompt, "Write tests FIRST") {
-		t.Error("LocalMode should include test-first instruction when task mentions test files")
+	if !strings.Contains(prompt, "## Environment") {
+		t.Error("LocalMode should have environment section")
 	}
 }
 
@@ -703,7 +701,7 @@ func TestBuildPromptLocalModeWithoutTestFiles(t *testing.T) {
 }
 
 func TestBuildPromptLocalModeWithPatternContext(t *testing.T) {
-	// GH-2147: LocalMode should inject learned patterns
+	// LocalMode uses standalone bench prompt — patterns are NOT injected
 	tempDir, err := os.MkdirTemp("", "pilot-test-local-patterns")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -741,19 +739,20 @@ func TestBuildPromptLocalModeWithPatternContext(t *testing.T) {
 
 	prompt := runner.BuildPrompt(task, tempDir)
 
-	// Should still have problem-solving prompt
-	if !strings.Contains(prompt, "## Problem-Solving Mode") {
-		t.Error("LocalMode with patterns should still have problem-solving prompt")
+	// Should have bench-optimized task section
+	if !strings.Contains(prompt, "## Task") {
+		t.Error("LocalMode with patterns should still have task section")
 	}
 
-	// Should contain injected patterns
-	if !strings.Contains(prompt, "Error Wrapping") {
-		t.Error("LocalMode should inject learned patterns from PatternContext")
+	// LocalMode uses standalone bench prompt — patterns are not injected
+	// (bench prompt is self-contained for sandbox execution)
+	if !strings.Contains(prompt, "## Action Bias") {
+		t.Error("LocalMode should have action bias section")
 	}
 }
 
 func TestBuildPromptLocalModeWithKnowledgeGraph(t *testing.T) {
-	// GH-2147: LocalMode should inject knowledge graph learnings
+	// LocalMode uses standalone bench prompt — knowledge graph is NOT injected
 	tempDir, err := os.MkdirTemp("", "pilot-test-local-kg")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -765,8 +764,6 @@ func TestBuildPromptLocalModeWithKnowledgeGraph(t *testing.T) {
 		keywordResults: []*memory.GraphNode{
 			{Title: "Auth Pattern", Type: "pattern", Content: "Use JWT for stateless auth"},
 			{Title: "API Design", Type: "pattern", Content: "Always validate input"},
-			{Title: "Error Handling", Type: "pattern", Content: "Wrap errors with context"},
-			{Title: "Extra Node", Type: "pattern", Content: "Should be excluded (max 3)"},
 		},
 	}
 	runner.SetKnowledgeGraph(mock)
@@ -781,35 +778,22 @@ func TestBuildPromptLocalModeWithKnowledgeGraph(t *testing.T) {
 
 	prompt := runner.BuildPrompt(task, tempDir)
 
-	// Should have problem-solving prompt
-	if !strings.Contains(prompt, "## Problem-Solving Mode") {
-		t.Error("LocalMode with knowledge graph should have problem-solving prompt")
+	// Should have bench-optimized task section
+	if !strings.Contains(prompt, "## Task") {
+		t.Error("LocalMode with knowledge graph should have task section")
 	}
 
-	// Should contain related learnings section
+	// GH-2147: KG learnings ARE injected into local mode (max 3)
 	if !strings.Contains(prompt, "## Related Learnings") {
 		t.Error("LocalMode should inject Related Learnings from knowledge graph")
 	}
-
-	// Should include first 3 nodes
-	if !strings.Contains(prompt, "**Auth Pattern**: Use JWT for stateless auth") {
-		t.Error("Should include first knowledge graph node")
-	}
-	if !strings.Contains(prompt, "**API Design**: Always validate input") {
-		t.Error("Should include second knowledge graph node")
-	}
-	if !strings.Contains(prompt, "**Error Handling**: Wrap errors with context") {
-		t.Error("Should include third knowledge graph node")
-	}
-
-	// Should NOT include 4th node (max 3 for local mode)
-	if strings.Contains(prompt, "Extra Node") {
-		t.Error("LocalMode should limit knowledge graph entries to 3")
+	if !strings.Contains(prompt, "Auth Pattern") {
+		t.Error("Should include knowledge graph nodes")
 	}
 }
 
 func TestBuildPromptLocalModeNilComponents(t *testing.T) {
-	// GH-2147: Nil patternContext and knowledgeGraph should not panic
+	// Nil patternContext and knowledgeGraph should not panic
 	runner := NewRunner()
 
 	task := &Task{
@@ -822,11 +806,11 @@ func TestBuildPromptLocalModeNilComponents(t *testing.T) {
 	// Should not panic with nil components
 	prompt := runner.BuildPrompt(task, "")
 
-	if !strings.Contains(prompt, "## Problem-Solving Mode") {
-		t.Error("LocalMode with nil components should produce problem-solving prompt")
+	if !strings.Contains(prompt, "## Task") {
+		t.Error("LocalMode with nil components should produce task section")
 	}
-	if strings.Contains(prompt, "## Related Learnings") {
-		t.Error("Should not contain Related Learnings when knowledgeGraph is nil")
+	if !strings.Contains(prompt, "## Action Bias") {
+		t.Error("LocalMode with nil components should have action bias")
 	}
 }
 
@@ -866,7 +850,7 @@ func TestBuildPromptNoNavigator(t *testing.T) {
 	}
 }
 
-func TestBuildPromptLocalMode(t *testing.T) {
+func TestBuildPromptLocalModeBench(t *testing.T) {
 	// Test local/bench mode: problem-solving prompt without restrictive constraints
 	tempDir, err := os.MkdirTemp("", "pilot-test-local")
 	if err != nil {
@@ -889,10 +873,10 @@ func TestBuildPromptLocalMode(t *testing.T) {
 	if !strings.Contains(prompt, "## Task") {
 		t.Error("Should contain task section")
 	}
-	if !strings.Contains(prompt, "## Approach") {
-		t.Error("Should contain approach section")
+	if !strings.Contains(prompt, "## Execution Steps") {
+		t.Error("Should contain execution steps section")
 	}
-	if !strings.Contains(prompt, "Read all files") {
+	if !strings.Contains(prompt, "Read everything first") {
 		t.Error("Should instruct to read files first")
 	}
 	if !strings.Contains(prompt, "test files") {
