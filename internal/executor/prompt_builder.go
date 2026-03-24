@@ -286,18 +286,37 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) string {
 // It skips Navigator workflow, PR constraints, and project context injection.
 // Designed for `pilot task --local` where the goal is direct problem-solving.
 // v9: proven baseline from v5m (68.5%).
+func readEnvContext(projectPath string) string {
+	data, err := os.ReadFile(filepath.Join(projectPath, ".pilot-env-context.txt"))
+	if err != nil {
+		return ""
+	}
+	// Cap at 1200 bytes to keep prompt lean
+	if len(data) > 1200 {
+		data = data[:1200]
+	}
+	return string(data)
+}
+
 func (r *Runner) buildLocalModePrompt(task *Task) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("## Task\n\n%s\n\n", task.Description))
+
+	// Inject pre-discovered environment if available (written by agent.py setup)
+	if envCtx := readEnvContext(task.ProjectPath); envCtx != "" {
+		sb.WriteString("## Pre-discovered Environment\n\n")
+		sb.WriteString("```\n")
+		sb.WriteString(envCtx)
+		sb.WriteString("```\n\n")
+	}
 
 	// Phase 1: Mandatory reconnaissance (ForgeCode: +28pts from enforced planning)
 	sb.WriteString("## Phase 1: RECON (mandatory — do ALL before writing ANY code)\n\n")
 	sb.WriteString("You MUST complete every step below before writing a single line of solution code.\n\n")
 	sb.WriteString("1. **Read test file**: `cat /tests/test_outputs.py` — this defines pass/fail. Understand EXACTLY what outputs are expected, what format, what tolerances.\n")
 	sb.WriteString("2. **Inventory the workspace**: `ls -la /app/` and read every relevant file. Understand what exists.\n")
-	sb.WriteString("3. **Check environment**: Run `python3 -c 'import torch; print(torch.__version__)' 2>/dev/null; python3 -c 'import scipy; print(scipy.__version__)' 2>/dev/null; python3 -c 'import pandas; print(pandas.__version__)' 2>/dev/null; which gcc g++ make cmake 2>/dev/null; free -m; nproc`\n")
-	sb.WriteString("4. **Write a plan**: Create a TODO list with specific steps. State which approach you'll use and why. This is NOT optional.\n\n")
+	sb.WriteString("3. **Write a plan**: Create a TODO list with specific steps. State which approach you'll use and why. This is NOT optional.\n\n")
 
 	// Phase 2: Implementation
 	sb.WriteString("## Phase 2: IMPLEMENT\n\n")
@@ -332,6 +351,8 @@ func (r *Runner) buildLocalModePrompt(task *Task) string {
 	sb.WriteString("- Keep command timeouts short (30s default) — kill hung processes fast\n")
 	sb.WriteString("- Never retry the same failing approach — try something different\n")
 	sb.WriteString("- Do NOT spend tokens on explanations or summaries — only code and commands\n")
+	sb.WriteString("- If you have written >500 words of reasoning without executing any code, STOP and write code NOW\n")
+	sb.WriteString("- Never spend more than 2 tool calls on reading/exploring before writing your first code file\n")
 
 	return sb.String()
 }

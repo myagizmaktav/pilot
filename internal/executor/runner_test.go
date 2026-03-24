@@ -3155,7 +3155,9 @@ func TestLocalModeSkipsNavigatorAutoInit(t *testing.T) {
 	}
 }
 
-func TestLocalModeSkipsQualityGates(t *testing.T) {
+func TestLocalModeRunsQualityGates(t *testing.T) {
+	// Quality gates are now enabled in LocalMode (re-enabled for bench,
+	// deps are pre-installed so OOM risk is mitigated).
 	projectDir := t.TempDir()
 
 	backend := &mockSelfReviewBackend{output: "done"}
@@ -3174,8 +3176,8 @@ func TestLocalModeSkipsQualityGates(t *testing.T) {
 
 	task := &Task{
 		ID:          "LOCAL-QG-001",
-		Title:       "Local mode quality gate skip",
-		Description: "Quality gates should not run in LocalMode",
+		Title:       "Local mode quality gate test",
+		Description: "Quality gates should run in LocalMode",
 		ProjectPath: projectDir,
 		LocalMode:   true,
 	}
@@ -3191,7 +3193,7 @@ func TestLocalModeSkipsQualityGates(t *testing.T) {
 		t.Fatalf("Execute() not successful: %s", result.Error)
 	}
 
-	if qualityGateCalled {
-		t.Errorf("quality checker factory was called in LocalMode — quality gates should be skipped")
+	if !qualityGateCalled {
+		t.Errorf("quality checker factory was NOT called in LocalMode — quality gates should run")
 	}
 }

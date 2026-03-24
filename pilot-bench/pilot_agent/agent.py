@@ -276,6 +276,9 @@ memory:
             )
             logger.info("Uploaded pre-seeded learning DB to /root/.pilot/data/pilot.db")
 
+        # Pre-discover environment so prompt can include it (saves 1 turn)
+        await self._run_env_bootstrap(environment)
+
         # Upload test files for test-aware prompting
         # Pilot's prompt builder can read /tests/ if it exists
         tests_dir = self._find_task_tests_dir()
@@ -291,6 +294,36 @@ memory:
                     uploaded += 1
             if uploaded:
                 logger.info(f"Uploaded {uploaded} test files to /tests/")
+
+    async def _run_env_bootstrap(self, environment) -> None:
+        """Pre-discover container environment and save to file.
+
+        The Go prompt builder reads this file and injects it into the prompt,
+        saving Claude one full turn of env discovery commands.
+        """
+        cmds = [
+            "echo '=== FILES ==='",
+            "ls /app/ 2>/dev/null | head -30",
+            "echo '=== TESTS ==='",
+            "head -50 /tests/test_outputs.py 2>/dev/null || echo 'NO_TEST_FILE'",
+            "echo '=== PYTHON PACKAGES ==='",
+            "python3 -c \"import torch; print('torch='+torch.__version__)\" 2>/dev/null || echo 'torch=missing'",
+            "python3 -c \"import scipy; print('scipy='+scipy.__version__)\" 2>/dev/null || echo 'scipy=missing'",
+            "python3 -c \"import pandas; print('pandas='+pandas.__version__)\" 2>/dev/null || echo 'pandas=missing'",
+            "python3 -c \"import sklearn; print('sklearn=available')\" 2>/dev/null || echo 'sklearn=missing'",
+            "echo '=== SYSTEM ==='",
+            "free -m 2>/dev/null | grep Mem || echo 'free: N/A'",
+            "echo \"CPUs: $(nproc 2>/dev/null || echo N/A)\"",
+        ]
+        script = " ; ".join(cmds)
+        try:
+            await environment.exec(
+                command=f"({script}) > /app/.pilot-env-context.txt 2>&1",
+                timeout_sec=15,
+            )
+            logger.info("Environment bootstrap written to /app/.pilot-env-context.txt")
+        except Exception as e:
+            logger.warning(f"Env bootstrap failed (non-fatal): {e}")
 
     def _find_task_tests_dir(self) -> Path | None:
         """Find test files in harbor's task cache."""
