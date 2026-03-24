@@ -291,36 +291,47 @@ func (r *Runner) buildLocalModePrompt(task *Task) string {
 
 	sb.WriteString(fmt.Sprintf("## Task\n\n%s\n\n", task.Description))
 
-	sb.WriteString("## FIRST: Check for test files\n\n")
-	sb.WriteString("BEFORE doing anything else, check if `/tests/test_outputs.py` exists. If it does, read it — it contains the exact validation logic and expected outputs that will be used to grade your work. This is the single most important step.\n\n")
+	// Phase 1: Mandatory reconnaissance (ForgeCode: +28pts from enforced planning)
+	sb.WriteString("## Phase 1: RECON (mandatory — do ALL before writing ANY code)\n\n")
+	sb.WriteString("You MUST complete every step below before writing a single line of solution code.\n\n")
+	sb.WriteString("1. **Read test file**: `cat /tests/test_outputs.py` — this defines pass/fail. Understand EXACTLY what outputs are expected, what format, what tolerances.\n")
+	sb.WriteString("2. **Inventory the workspace**: `ls -la /app/` and read every relevant file. Understand what exists.\n")
+	sb.WriteString("3. **Check environment**: Run `python3 -c 'import torch; print(torch.__version__)' 2>/dev/null; python3 -c 'import scipy; print(scipy.__version__)' 2>/dev/null; python3 -c 'import pandas; print(pandas.__version__)' 2>/dev/null; which gcc g++ make cmake 2>/dev/null; free -m; nproc`\n")
+	sb.WriteString("4. **Write a plan**: Create a TODO list with specific steps. State which approach you'll use and why. This is NOT optional.\n\n")
 
+	// Phase 2: Implementation
+	sb.WriteString("## Phase 2: IMPLEMENT\n\n")
+	sb.WriteString("1. **Start with the simplest working approach** — brute-force beats elegant theory you never finish.\n")
+	sb.WriteString("2. **Produce output files EARLY** — partial/placeholder output beats no output.\n")
+	sb.WriteString("3. **Run tests after EVERY significant change**: `cd /app && python3 -m pytest /tests/test_outputs.py -v 2>&1`\n")
+	sb.WriteString("4. **If tests pass, STOP IMMEDIATELY.** No cleanup, no refactoring, no summary.\n\n")
+
+	// Phase 3: Recovery
+	sb.WriteString("## Phase 3: RECOVERY (if tests fail)\n\n")
+	sb.WriteString("- If stuck for >10 minutes on one approach: DELETE your code and try a COMPLETELY different algorithm.\n")
+	sb.WriteString("- If you've edited the same file 3+ times without test improvement: your approach is wrong. Switch.\n")
+	sb.WriteString("- Read test output carefully — often the fix is a format mismatch (wrong filename, wrong precision, missing newline), not a logic error.\n")
+	sb.WriteString("- Write analysis scripts instead of reasoning through data manually.\n\n")
+
+	// Environment
 	sb.WriteString("## Environment\n\n")
-	sb.WriteString("Pre-installed:\n")
-	sb.WriteString("- Python: numpy\n")
-	sb.WriteString("- System: git, curl, wget, jq, gcc, make\n")
+	sb.WriteString("Pre-installed (do NOT reinstall):\n")
+	sb.WriteString("- Python: numpy (always available)\n")
+	sb.WriteString("- System: git, curl, wget, jq, gcc, g++, make\n")
 	sb.WriteString("- Tools: uv, uvx (at /usr/local/bin/)\n")
-	sb.WriteString("Many task containers also have torch, scipy, pandas pre-installed in their Docker image. Check before installing.\n")
-	sb.WriteString("If you need torch and it's not available, install CPU-only: `pip install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu`\n\n")
+	sb.WriteString("Many containers also have torch, scipy, pandas, scikit-learn in their Docker image.\n")
+	sb.WriteString("**ALWAYS check first**: `python3 -c 'import X'` before installing.\n")
+	sb.WriteString("If torch is missing and needed: `pip install --break-system-packages torch --index-url https://download.pytorch.org/whl/cpu`\n")
+	sb.WriteString("Container has ~2GB RAM. Do NOT run multiple heavy processes concurrently.\n\n")
 
-	sb.WriteString("## Execution Steps\n\n")
-	sb.WriteString("1. **Read everything first**: Read all files in the working directory AND test files. Understand what exists, what's expected, and what format outputs need.\n")
-	sb.WriteString("2. **Plan briefly**: Identify the simplest path to passing tests. Check what packages are available before installing.\n")
-	sb.WriteString("3. **Write output early**: Produce required output file(s) as soon as possible — partial progress beats no output.\n")
-	sb.WriteString("4. **Iterate on failures**: If something doesn't work, try a different approach. Write scripts for analysis rather than reasoning through complex data manually.\n")
-	sb.WriteString("5. **Self-verify**: Run `cd /app && python3 -m pytest /tests/test_outputs.py -v` before finishing. Fix any failures. If tests pass, STOP.\n\n")
-
-	sb.WriteString("## Action Bias\n\n")
-	sb.WriteString("- Start writing code within the first 5 minutes. Do NOT spend extended time thinking.\n")
-	sb.WriteString("- A working brute-force solution beats a perfect approach you never implement.\n")
-	sb.WriteString("- If stuck after 15 minutes on one approach, switch to a completely different strategy.\n")
-	sb.WriteString("- Once tests pass, STOP IMMEDIATELY. No summaries, no cleanup, no additional analysis.\n\n")
-
+	// Rules
 	sb.WriteString("## Rules\n\n")
 	sb.WriteString("- Work autonomously — never ask for confirmation\n")
-	sb.WriteString("- Check if packages exist before installing (`python3 -c 'import X'`) — many are pre-installed\n")
-	sb.WriteString("- Use `--break-system-packages` with pip when installing\n")
-	sb.WriteString("- If a build fails, check error for missing deps — usually available via `apt-get install`\n")
-	sb.WriteString("- If something fails, try a DIFFERENT approach — don't retry the same thing\n")
+	sb.WriteString("- Use `--break-system-packages` with pip\n")
+	sb.WriteString("- If a build fails, check error for missing deps — `apt-get install -y <pkg>`\n")
+	sb.WriteString("- Keep command timeouts short (30s default) — kill hung processes fast\n")
+	sb.WriteString("- Never retry the same failing approach — try something different\n")
+	sb.WriteString("- Do NOT spend tokens on explanations or summaries — only code and commands\n")
 
 	return sb.String()
 }

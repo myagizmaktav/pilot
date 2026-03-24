@@ -667,9 +667,15 @@ func TestBuildPromptLocalMode(t *testing.T) {
 		t.Error("LocalMode should not mention PR creation constraints")
 	}
 
-	// Should have bench-optimized sections
-	if !strings.Contains(prompt, "## Action Bias") {
-		t.Error("LocalMode should have action bias section")
+	// Should have phased execution structure
+	if !strings.Contains(prompt, "## Phase 1: RECON") {
+		t.Error("LocalMode should have mandatory recon phase")
+	}
+	if !strings.Contains(prompt, "## Phase 2: IMPLEMENT") {
+		t.Error("LocalMode should have implementation phase")
+	}
+	if !strings.Contains(prompt, "## Phase 3: RECOVERY") {
+		t.Error("LocalMode should have recovery phase")
 	}
 	if !strings.Contains(prompt, "## Environment") {
 		t.Error("LocalMode should have environment section")
@@ -746,8 +752,8 @@ func TestBuildPromptLocalModeWithPatternContext(t *testing.T) {
 
 	// LocalMode uses standalone bench prompt — patterns are not injected
 	// (bench prompt is self-contained for sandbox execution)
-	if !strings.Contains(prompt, "## Action Bias") {
-		t.Error("LocalMode should have action bias section")
+	if !strings.Contains(prompt, "## Phase 1: RECON") {
+		t.Error("LocalMode should have recon phase")
 	}
 }
 
@@ -809,8 +815,8 @@ func TestBuildPromptLocalModeNilComponents(t *testing.T) {
 	if !strings.Contains(prompt, "## Task") {
 		t.Error("LocalMode with nil components should produce task section")
 	}
-	if !strings.Contains(prompt, "## Action Bias") {
-		t.Error("LocalMode with nil components should have action bias")
+	if !strings.Contains(prompt, "## Phase 1: RECON") {
+		t.Error("LocalMode with nil components should have recon phase")
 	}
 }
 
@@ -869,18 +875,21 @@ func TestBuildPromptLocalModeBench(t *testing.T) {
 
 	prompt := runner.BuildPrompt(task, tempDir)
 
-	// Local mode should use problem-solving prompt
+	// Local mode should use phased execution
 	if !strings.Contains(prompt, "## Task") {
 		t.Error("Should contain task section")
 	}
-	if !strings.Contains(prompt, "## Execution Steps") {
-		t.Error("Should contain execution steps section")
+	if !strings.Contains(prompt, "## Phase 1: RECON") {
+		t.Error("Should contain mandatory recon phase")
 	}
-	if !strings.Contains(prompt, "Read everything first") {
-		t.Error("Should instruct to read files first")
+	if !strings.Contains(prompt, "## Phase 2: IMPLEMENT") {
+		t.Error("Should contain implementation phase")
 	}
-	if !strings.Contains(prompt, "test files") {
-		t.Error("Should mention checking test files")
+	if !strings.Contains(prompt, "## Phase 3: RECOVERY") {
+		t.Error("Should contain recovery phase")
+	}
+	if !strings.Contains(prompt, "test_outputs.py") {
+		t.Error("Should mention test files")
 	}
 
 	// Should have environment section with pre-installed deps
@@ -890,23 +899,25 @@ func TestBuildPromptLocalModeBench(t *testing.T) {
 	if !strings.Contains(prompt, "numpy") {
 		t.Error("Should mention numpy as pre-installed")
 	}
-	// Should tell agent to check before installing
-	if !strings.Contains(prompt, "Check if packages exist") {
+	// Should enforce checking before installing
+	if !strings.Contains(prompt, "ALWAYS check first") {
 		t.Error("Should tell agent to check before installing packages")
 	}
 
-	// Should have action bias section to prevent analysis paralysis
-	if !strings.Contains(prompt, "Action Bias") {
-		t.Error("Should have action bias section")
-	}
-	if !strings.Contains(prompt, "5 minutes") {
-		t.Error("Should enforce code writing within first 5 minutes")
+	// Should have implementation guidance
+	if !strings.Contains(prompt, "brute-force") {
+		t.Error("Should prefer working brute-force over perfect theory")
 	}
 	if !strings.Contains(prompt, "STOP IMMEDIATELY") {
 		t.Error("Should tell agent to stop after tests pass")
 	}
-	if !strings.Contains(prompt, "brute-force") {
-		t.Error("Should prefer working brute-force over perfect theory")
+	// Should enforce mandatory planning
+	if !strings.Contains(prompt, "Write a plan") {
+		t.Error("Should enforce mandatory planning before implementation")
+	}
+	// Should warn about memory
+	if !strings.Contains(prompt, "2GB RAM") {
+		t.Error("Should warn about container memory limit")
 	}
 
 	// Should NOT have restrictive PR constraints
