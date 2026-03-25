@@ -502,14 +502,14 @@ def main():
     parser.add_argument("--result-json", default=RESULT_JSON, help="Result output path")
     args = parser.parse_args()
 
+    global RESULT_JSON
+    RESULT_JSON = args.result_json
+
     # Resolve API key
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("PILOT_ENGINE_API_KEY")
     if not api_key:
         logger.error("No API key found. Set ANTHROPIC_API_KEY or PILOT_ENGINE_API_KEY")
         sys.exit(1)
-
-    global RESULT_JSON
-    RESULT_JSON = args.result_json
 
     success = run(args.task, args.project, args.model, api_key)
     sys.exit(0 if success else 1)
