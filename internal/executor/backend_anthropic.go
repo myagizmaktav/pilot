@@ -331,10 +331,10 @@ func (b *AnthropicBackend) callAPI(ctx context.Context, req *apiRequest) (*apiRe
 		httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 		httpReq.Header.Set("Accept", "text/event-stream")
 
-		// OAuth tokens (sk-ant-oat*) use Bearer auth, API keys (sk-ant-api*) use x-api-key
-		if strings.Contains(b.apiKey, "-oat") {
-			httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
-		} else if strings.HasPrefix(b.apiKey, "sk-ant-") {
+		// All sk-ant-* tokens (API keys AND OAuth) use x-api-key header.
+		// This matches effort_classifier.go behavior — OAuth tokens work
+		// with x-api-key but NOT with Authorization: Bearer.
+		if strings.HasPrefix(b.apiKey, "sk-ant-") {
 			httpReq.Header.Set("x-api-key", b.apiKey)
 		} else {
 			httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
