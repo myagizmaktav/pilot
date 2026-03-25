@@ -225,65 +225,57 @@ memory:
 """
 
     async def setup(self, environment) -> None:
-        """Install Claude Code + pilot binary, write config, upload test files."""
+        """Install pilot binary, write config, upload test files."""
         # Base setup: renders install-pilot-agent.sh.j2, uploads, executes
         await super().setup(environment)
+
+        logger.info("Starting agent setup (binary + config + tests)...")
 
         # Upload pre-built pilot binary (compressed to speed up Modal upload)
         gz_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64.gz"
         raw_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
         if gz_path.exists():
-            await environment.upload_file(
-                source_path=gz_path,
-                target_path="/tmp/pilot.gz",
-            )
+            logger.info(f"Uploading compressed binary ({gz_path.stat().st_size // 1024}KB)...")
+            await environment.upload_file(source_path=gz_path, target_path="/tmp/pilot.gz")
             await environment.exec(command="gunzip -f /tmp/pilot.gz && mv /tmp/pilot /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
-            logger.info("Uploaded + decompressed pilot binary")
+            logger.info("Binary uploaded + decompressed")
         elif raw_path.exists():
-            await environment.upload_file(
-                source_path=raw_path,
-                target_path="/usr/local/bin/pilot",
-            )
+            logger.info(f"Uploading binary ({raw_path.stat().st_size // 1024 // 1024}MB)...")
+            await environment.upload_file(source_path=raw_path, target_path="/usr/local/bin/pilot")
             await environment.exec(command="chmod +x /usr/local/bin/pilot")
-            logger.info("Uploaded pilot binary (uncompressed)")
+            logger.info("Binary uploaded")
         else:
             raise FileNotFoundError("Pilot binary not found. Run 'make bench-binary' first.")
 
-        # Write config with anthropic-api backend
+        # Write config
+        logger.info("Writing config...")
         model = self._resolve_model()
         config = self._build_config(model)
         await environment.exec(
             command=f"mkdir -p /root/.pilot && cat > /root/.pilot/config.yaml << 'CFGEOF'\n{config}CFGEOF",
         )
 
-        # Upload pre-seeded learning DB (curated patterns from bench failure analysis)
+        # Upload learning DB
         db_path = Path(__file__).parent / "data" / "pilot.db"
         if db_path.exists():
+            logger.info("Uploading learning DB...")
             await environment.exec(command="mkdir -p /root/.pilot/data")
-            await environment.upload_file(
-                source_path=db_path,
-                target_path="/root/.pilot/data/pilot.db",
-            )
-            logger.info("Uploaded pre-seeded learning DB to /root/.pilot/data/pilot.db")
+            await environment.upload_file(source_path=db_path, target_path="/root/.pilot/data/pilot.db")
 
-        # Pre-discover environment so prompt can include it (saves 1 turn)
+        # Env bootstrap
+        logger.info("Running env bootstrap...")
         await self._run_env_bootstrap(environment)
 
-        # Upload test files for test-aware prompting
-        # Pilot's prompt builder can read /tests/ if it exists
+        # Upload test files
         tests_dir = self._find_task_tests_dir()
         if tests_dir:
+            logger.info("Uploading test files...")
             await environment.exec(command="mkdir -p /tests")
-            uploaded = 0
             for test_file in sorted(tests_dir.iterdir()):
                 if test_file.is_file():
-                    await environment.upload_file(
-                        source_path=test_file,
-                        target_path=f"/tests/{test_file.name}",
-                    )
-                    uploaded += 1
-            if uploaded:
-                logger.info(f"Uploaded {uploaded} test files to /tests/")
+                    await environment.upload_file(source_path=test_file, target_path=f"/tests/{test_file.name}")
+
+        logger.info("Agent setup complete")
 
     async def _run_env_bootstrap(self, environment) -> None:
         """Pre-discover container environment and save to file.
