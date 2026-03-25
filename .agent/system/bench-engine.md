@@ -1,256 +1,286 @@
 # Bench Engine Architecture
 
-Custom execution engine for Terminal Bench 2.0. Replaces Claude Code CLI with direct Anthropic API calls.
+Terminal Bench 2.0 execution engine. Two implementations: Go backend (production, tests Pilot pipeline) and Python engine (standalone, proven 83%).
 
 ## Why Custom Engine
 
-Claude Code is a black box — no control over:
-- Thinking budget per turn (extended thinking runs unbounded)
-- Tool dispatch (can't validate/correct tool calls)
-- Context window (CC manages its own compaction)
-- Retry behavior (opaque error handling)
+Claude Code CLI is a black box — no control over thinking budgets, tool dispatch, context window, or retry behavior. ForgeCode (81.8%) and every top agent uses direct API calls.
 
-ForgeCode (81.8%) and every top Terminal Bench agent uses direct API calls.
+**Pilot's differentiator**: model routing, effort classification, quality gates, learning DB. These must be tested, not bypassed.
 
-## Architecture
+## Two Implementations
 
-```
-Harbor Orchestrator (Python)
-  │
-  ├── agent.py (PilotAgent) — Harbor interface
-  │   ├── setup() — install deps, upload engine, bootstrap env
-  │   └── create_run_agent_commands() — returns ExecInput for engine.py
-  │
-  └── engine.py (in container) — execution loop
-      ├── Anthropic Messages API (tool_use + extended thinking)
-      ├── Tools: bash, read_file, write_file, edit_file
-      ├── Progressive thinking budget
-      ├── Loop detection
-      ├── Auto-test verification
-      ├── Context window pruning
-      └── Prompt caching (cache_control)
-```
+### 1. Go Backend (`backend_anthropic.go`) — PRODUCTION TARGET
 
-### Data Flow
+Implements Pilot's `Backend` interface. Runs inside the full Go pipeline — router, classifier, gates, learning DB all active. The Go binary calls the Anthropic API directly instead of spawning Claude Code CLI.
 
 ```
-1. Harbor downloads task + creates Modal sandbox
+Harbor → agent.py → pilot binary (Go) → Runner.Execute()
+                                           ├── EffortClassifier (Haiku) → complexity
+                                           ├── ModelRouter → select model
+                                           ├── AnthropicBackend.Execute() → API call
+                                           │   ├── SSE streaming
+                                           │   ├── Tool execution (bash/read/write/edit)
+                                           │   └── Progressive thinking
+                                           ├── QualityGates (pytest)
+                                           └── PatternContext (learning DB)
+```
+
+**Status**: Built, compiles, tests pass. Blocked on API credits (OAuth tokens not supported on raw API).
+
+### 2. Python Engine (`engine.py`) — STANDALONE FALLBACK
+
+Direct API calls from Python. No Go binary, no Pilot pipeline. Just tools + thinking + retry.
+
+```
+Harbor → agent.py → engine.py → Anthropic API
+                       ├── Tools: bash, read_file, write_file, edit_file
+                       ├── Progressive thinking (10K→3K)
+                       ├── Loop detection
+                       └── Learning DB (SQLite read)
+```
+
+**Status**: Proven 83.3% at 12 trials. Killed by API credit exhaustion.
+
+## Model Routing (Go Backend)
+
+Pilot's effort classifier (Haiku, ~$0.001/call) pre-classifies task complexity. Router selects model and effort level. Backend maps effort to thinking budget.
+
+| Complexity | Model | Effort | Thinking | Cost/1M Input |
+|-----------|-------|--------|----------|---------------|
+| Trivial (~18%) | Haiku | low | OFF | $0.80 |
+| Simple (~22%) | Sonnet | medium | OFF | $3.00 |
+| Medium (~30%) | Opus | high | 10K→3K progressive | $15.00 |
+| Complex (~30%) | Opus | high | 10K→3K progressive | $15.00 |
+
+**Weighted average: ~$7/1M input (53% cheaper than all-Opus).**
+
+Thinking is disabled for Haiku/Sonnet — only Opus uses extended thinking. This avoids compatibility issues and reduces token waste on simple tasks.
+
+## Data Flow (Go Backend)
+
+```
+1. Harbor creates Modal sandbox, runs install-pilot-agent.sh.j2
 2. agent.py setup():
-   - Runs install-pilot-agent.sh.j2 (Node, uv, numpy, git)
-   - Uploads engine.py to /opt/pilot-agent/
-   - pip installs anthropic SDK
-   - Uploads pilot.db (learning patterns) to /root/.pilot/data/
-   - Runs env bootstrap → /app/.pilot-env-context.txt
-   - Uploads test files to /tests/
+   a. Upload Go binary (28MB, chunked base64 fallback)
+   b. Write /root/.pilot/config.yaml (type: "anthropic-api")
+   c. Upload pilot.db (17 patterns)
+   d. Env bootstrap → /app/.pilot-env-context.txt
+   e. Upload test files to /tests/
 3. Harbor calls create_run_agent_commands(instruction)
-   → returns: python3 /opt/pilot-agent/engine.py --task "..." --project /app
-4. engine.py runs:
-   - Builds system prompt (task + env context + learned patterns)
-   - Enters turn loop (max 60 turns, 90min timeout)
-   - Calls Anthropic API with progressive thinking
-   - Executes tool calls (bash, read, write, edit)
-   - Auto-checks tests every 8 turns
-   - Stops when tests pass or timeout
+   → "pilot task 'instruction' --local --project /app"
+4. Go binary runs:
+   a. EffortClassifier → classify complexity
+   b. ModelRouter → select model + effort
+   c. PromptBuilder → build phased prompt + patterns
+   d. AnthropicBackend.Execute() → API loop
+   e. QualityGates → pytest between iterations
 5. Writes /logs/agent/pilot-result.json
-6. Harbor runs verifier (pytest) → reward 0.0 or 1.0
+6. Harbor verifier → reward 0.0 or 1.0
 ```
 
-## Engine Configuration
+## Go Backend Configuration
 
-### Constants (engine.py top-level)
+### Constants (`backend_anthropic.go`)
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `MAX_TURNS` | 60 | Max API call iterations |
-| `MAIN_TIMEOUT` | 5400 | 90 min total budget (seconds) |
-| `BASH_TIMEOUT` | 120 | Per-command timeout (seconds) |
-| `THINKING_HIGH_TURNS` | 8 | Turns with high thinking budget |
-| `THINKING_HIGH_BUDGET` | 16000 | Thinking tokens for planning phase |
-| `THINKING_LOW_BUDGET` | 4000 | Thinking tokens for execution phase |
-| `MAX_OUTPUT_TOKENS` | 16000 | Max output tokens per API call |
-| `TEST_CHECK_INTERVAL` | 8 | Auto-run tests every N turns |
-| `MAX_REPEATED_COMMANDS` | 3 | Identical commands before loop warning |
-| `CONTEXT_PRUNE_THRESHOLD` | 150000 | Estimated tokens before pruning |
-| `CONTEXT_KEEP_TURNS` | 12 | Turns to keep when pruning |
+| `thinkingHighTurns` | 8 | Turns with high thinking budget |
+| `thinkingHighBudget` | 10000 | Planning phase tokens (Opus only) |
+| `thinkingLowBudget` | 3000 | Execution phase tokens (Opus only) |
+| `maxOutputTokens` | 12000 | Max non-thinking output per turn |
+| `apiMaxTurns` | 60 | Max API call iterations |
+| `apiBashTimeout` | 120 | Per-command timeout (seconds) |
+| `apiMaxRetries` | 5 | API retry attempts |
+| `apiOutputCap` | 50000 | Truncate tool output (bytes) |
+| `apiContextPruneAt` | 150000 | Estimated tokens before pruning |
 
-### Tuning Knobs
+### Effort → Thinking Budget Mapping
 
-**Thinking budget** — The most impactful parameter. Higher = better planning but slower and more expensive. ForgeCode uses high thinking early, low later. Current split: 16K for turns 0-7, 4K for turns 8+.
-
-**Test interval** — How often to auto-inject test results. Lower = more feedback but wastes turns. Current: every 8 turns.
-
-**Bash timeout** — Per-command max. Too low kills pip install/builds. Too high wastes time on stuck commands. Current: 120s (max 600s via tool param).
-
-**Context pruning** — When to drop old messages. Too aggressive = loses important context. Too late = API errors. Current: prune at 150K estimated tokens, keep last 12 turns.
-
-## Tools
-
-### bash
-Execute shell commands with timeout. Output capped at 50KB (first/last 25KB on truncation). Returns exit code on non-zero.
-
-### read_file
-Read file with line numbers. Supports offset/limit for partial reads. Rejects files >500KB (suggests `head` instead).
-
-### write_file
-Write or overwrite file. Creates parent directories. For new files or complete rewrites.
-
-### edit_file
-String replacement — find `old_string` (must appear exactly once), replace with `new_string`. More precise than write_file for small changes. Returns error if old_string not found or ambiguous.
-
-## Progressive Thinking
-
-```
-Turn 0-7:  thinking_budget = 16000 tokens
-           → Deep planning, approach selection, test analysis
-
-Turn 8+:   thinking_budget = 4000 tokens
-           → Quick execution decisions, error fixing
+```go
+switch opts.Effort {
+case "low":   thinkingBudget = 1000   // Haiku tasks
+case "medium": thinkingBudget = 3000  // Sonnet tasks
+case "high":  // progressive: 10K first 8 turns, 3K after (Opus)
+case "max":   thinkingBudget = 15000  // Override for hardest tasks
+}
+// Thinking disabled entirely for non-Opus models
 ```
 
-This mirrors ForgeCode's technique that contributed +12 points to their score. The idea: spend thinking budget on understanding the problem (first 8 turns), then switch to rapid execution.
+### Bench Config (`agent.py _build_config()`)
 
-## Loop Detection
-
-`LoopDetector` tracks:
-1. **Command history** — if the last 3 bash commands are identical → inject warning
-2. **File edit counts** — if same file edited 5+ times → inject warning
-
-Warning format: `⚠️ LOOP DETECTED: You ran 'X' 3 times. STOP. Try a completely different approach.`
-
-Injected as a user message before the next API call.
-
-## Context Window Management
-
-Rough token estimation: `len(text) // 4`.
-
-When estimated context > 150K tokens:
-1. Keep first message (initial "Begin" instruction)
-2. Keep last 12 turns (24 messages — user+assistant pairs)
-3. Replace everything in between with: `[Context pruned: N earlier messages removed]`
-
-This prevents API errors on long tasks while preserving recent context.
-
-## Prompt Caching
-
-System prompt uses `cache_control: {"type": "ephemeral"}`:
-```python
-system = [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
+```yaml
+executor:
+  type: "anthropic-api"
+  model_routing:
+    enabled: true
+    trivial: "claude-haiku-4-5-20251001"
+    simple: "claude-sonnet-4-6"
+    medium: "claude-opus-4-6"
+    complex: "claude-opus-4-6"
+  effort_routing:
+    enabled: true
+    trivial: low
+    simple: medium
+    medium: high
+    complex: high
+  effort_classifier:
+    enabled: true
+    model: claude-haiku-4-5-20251001
+quality:
+  enabled: true
+  gates:
+    - name: test
+      command: "uvx pytest /tests/test_outputs.py -rA"
+      max_retries: 2
 ```
 
-This tells the API to cache the system prompt across turns. Since the system prompt is identical every turn (~2KB), this saves ~90% on input tokens for subsequent calls.
+## Tools (Both Engines)
+
+| Tool | Description | Limits |
+|------|-------------|--------|
+| `bash` | Shell command execution | 120s timeout, 50KB output cap |
+| `read_file` | Read with line numbers | 500KB max, offset/limit support |
+| `write_file` | Create/overwrite files | Creates parent dirs |
+| `edit_file` | String replacement | old_string must appear exactly once |
+
+## SSE Streaming (Go Backend)
+
+The Go backend parses Anthropic's Server-Sent Events stream:
+
+```
+event: message_start     → capture model, usage
+event: content_block_start → new text/tool_use block
+event: content_block_delta → accumulate text/input_json
+event: content_block_stop  → finalize block
+event: message_delta      → stop_reason, final usage
+event: message_stop       → done
+event: error              → handle/retry
+```
+
+Parsed in `parseSSEStream()` with 1MB scanner buffer for large responses.
 
 ## API Retry
 
-`api_call_with_retry()` handles:
-- **429 Rate Limit** — exponential backoff: 10s, 30s, 60s
-- **529 Overloaded** — same backoff
-- **Other errors** — fail immediately
+5 retries with 30/60/90/120/180s backoffs:
+- **429** Rate Limit
+- **529** API Overloaded
+- **5xx** Server errors
+- **200 + error body** (overloaded_error in response)
+- **Empty content** in response
 
-Max 3 retries before propagating the error.
+SDK retries disabled (`max_retries=0` in Python engine) to avoid double-retry stacking.
 
-## Result JSON
+## Context Window Management
 
-Written to `/logs/agent/pilot-result.json` (or `--result-json` path):
+Rough token estimate: `len(text) / 4`.
 
-```json
-{
-  "Success": true,
-  "TokensInput": 45000,
-  "TokensOutput": 12000,
-  "EstimatedCostUSD": 1.58,
-  "Turns": 15,
-  "ElapsedSeconds": 342.5
-}
-```
-
-Cost calculated from Opus 4.6 pricing: $15/1M input, $75/1M output.
-
-Harbor's `populate_context_post_run()` in agent.py reads this file for metrics.
+When estimated context > 150K tokens:
+1. Keep first message (initial instruction)
+2. Keep last 12 turns (24 messages)
+3. Replace middle with: `[Context pruned: N earlier messages removed]`
 
 ## Learning DB Integration
 
-Engine loads patterns from `/root/.pilot/data/pilot.db` (SQLite):
-- Queries `cross_patterns` table where `confidence >= 0.7`
-- Formats as `[DO]` / `[AVOID]` bullet list
-- Injects into system prompt under `## Learned Patterns`
+17 patterns loaded from `/root/.pilot/data/pilot.db`:
+- 11 recommended (test-first, brute-force, approach switching, task-specific strategies)
+- 6 anti-patterns (analysis paralysis, format mismatch, concurrent processes, retrying)
 
-Currently 17 patterns (11 recommended, 6 anti-patterns) covering:
-- Test-first workflow, brute-force approach, approach switching
-- Task-specific: torch pre-installed, compression stdlib, crypto textbook, build Makefile, git reflog
-- Anti-patterns: analysis paralysis, format mismatch, concurrent heavy processes, retrying failures
+Go backend: injected via `PatternContext.InjectPatterns()` in `BuildPrompt()`.
+Python engine: direct SQLite query in `load_patterns()`.
 
 Managed by `pilot-bench/pilot_agent/scripts/seed-learning-db.py`.
 
-## Env Bootstrap
+## Auth
 
-Before engine runs, `agent.py setup()` executes env discovery in the container:
-- `ls /app/` — workspace files
-- `head -50 /tests/test_outputs.py` — test file preview
-- Python package checks (torch, scipy, pandas, sklearn)
-- `free -m`, `nproc` — system resources
+**API Key** (`ANTHROPIC_API_KEY`): Works with raw API. Required for bench runs. Costs real money.
 
-Output saved to `/app/.pilot-env-context.txt`, injected into system prompt as `## Pre-discovered Environment`.
+**OAuth Token** (`CLAUDE_CODE_OAUTH_TOKEN`): Does NOT work with raw Anthropic API (401 "OAuth not supported" / "invalid x-api-key"). Only works through Claude Code CLI's internal gateway.
 
-## Files
+**Key resolution** (Go backend, matches effort_classifier.go):
+```
+ANTHROPIC_API_KEY → PILOT_ENGINE_API_KEY → ANTHROPIC_AUTH_TOKEN → CLAUDE_CODE_OAUTH_TOKEN
+```
+All `sk-ant-*` tokens sent as `x-api-key` header.
 
-| File | Purpose |
-|------|---------|
-| `pilot-bench/pilot_agent/engine.py` | Execution engine (direct API) |
-| `pilot-bench/pilot_agent/agent.py` | Harbor agent shim |
-| `pilot-bench/pilot_agent/templates/install-pilot-agent.sh.j2` | Container bootstrap |
-| `pilot-bench/pilot_agent/data/pilot.db` | Learning DB (SQLite) |
-| `pilot-bench/pilot_agent/scripts/seed-learning-db.py` | Pattern seeder |
+## Deployment
 
-## Running
+### Binary Upload to Modal
 
-### Validation (3 tasks)
+The 28MB Go binary upload via Harbor's `upload_file()` can take 5-15 minutes. Fallback: chunked base64 via `environment.exec()` heredocs (50KB chunks).
+
+Install script (`install-pilot-agent.sh.j2`) handles: apt deps, uv, numpy, git init. No Node.js or Claude Code needed.
+
+### Running
+
 ```bash
+# 3-task validation
 source .env && cd pilot-bench && harbor run \
-  --job-name pilot-engine-vN -o jobs -d terminal-bench@2.0 \
+  --job-name pilot-api-vN -o jobs -d terminal-bench@2.0 \
   --agent-import-path "pilot_agent:PilotAgent" \
-  -m "anthropic/claude-opus-4-6" -e modal -n 3 -k 1 \
+  -m "anthropic/claude-opus-4-6" -e modal -n 2 -k 1 \
   --agent-timeout-multiplier 9.0 --agent-setup-timeout-multiplier 5.0 \
   --ae "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
   --task-name "break-filter-js-from-html" \
   --task-name "chess-best-move" \
   --task-name "gcode-to-text"
-```
 
-### Full Run (k=5 for leaderboard)
-```bash
+# Full k=5 (leaderboard submission)
 source .env && cd pilot-bench && harbor run \
-  --job-name pilot-engine-full-k5 -o jobs -d terminal-bench@2.0 \
+  --job-name pilot-api-full-k5 -o jobs -d terminal-bench@2.0 \
   --agent-import-path "pilot_agent:PilotAgent" \
-  -m "anthropic/claude-opus-4-6" -e modal -n 3 -k 5 \
+  -m "anthropic/claude-opus-4-6" -e modal -n 2 -k 5 \
   --agent-timeout-multiplier 9.0 --agent-setup-timeout-multiplier 5.0 \
   --ae "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
 ```
 
-### Check Results
-```python
-import json
-r = json.load(open("pilot-bench/jobs/<job-name>/result.json"))
-s = r["stats"]["evals"]["pilot-real__claude-opus-4-6__terminal-bench"]
-print(f"Score: {s['metrics'][0]['mean']:.1%}")
-```
+### Debugging
 
-### Debug Failures
 ```bash
-# Agent stderr (engine errors)
+# Engine logs
 cat pilot-bench/jobs/<job>/<task>/agent/command-0/stderr.txt
 
-# Agent stdout (engine logs)
-cat pilot-bench/jobs/<job>/<task>/agent/command-0/stdout.txt
-
-# Verifier output (test results)
+# Verifier output
 cat pilot-bench/jobs/<job>/<task>/verifier/command-0/stdout.txt
+
+# Setup logs
+cat pilot-bench/jobs/<job>/<task>/agent/setup/stdout.txt
+
+# Check results
+python3 -c "
+import json
+r = json.load(open('pilot-bench/jobs/<job>/result.json'))
+s = r['stats']['evals']['pilot-real__claude-opus-4-6__terminal-bench']
+print(f\"Score: {s['metrics'][0]['mean']:.1%}\")
+"
 ```
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `internal/executor/backend_anthropic.go` | Go API backend (Backend interface) |
+| `internal/executor/backend_factory.go` | Factory — `anthropic-api` case |
+| `pilot-bench/pilot_agent/engine.py` | Python standalone engine (fallback) |
+| `pilot-bench/pilot_agent/agent.py` | Harbor agent shim |
+| `pilot-bench/pilot_agent/templates/install-pilot-agent.sh.j2` | Container bootstrap |
+| `pilot-bench/pilot_agent/data/pilot.db` | Learning DB (17 patterns) |
+| `pilot-bench/pilot_agent/scripts/seed-learning-db.py` | Pattern seeder |
+| `pilot-bench/.analysis/` | Research scripts, trajectory CSVs |
 
 ## Version History
 
-| Version | Date | Changes | Score |
-|---------|------|---------|-------|
-| v1 (CC) | 2026-03-08 | First bench run with Claude Code | 55.6% (18 tasks) |
-| v24 (CC) | 2026-03-22 | Best CC run, Haiku classifier, k=1 | 65.9% |
-| v32 (CC) | 2026-03-25 | CC + env bootstrap + quality gates, k=5 | 49.2% @58 |
-| v4 (engine) | 2026-03-25 | Custom engine, direct API | Validating... |
+| Version | Date | Engine | Score | Notes |
+|---------|------|--------|-------|-------|
+| v1 (CC) | 2026-03-08 | Claude Code | 55.6% @18 | First bench run |
+| v24 (CC) | 2026-03-22 | Claude Code | 65.9% k=1 | Best CC, Haiku classifier |
+| v32 (CC) | 2026-03-25 | Claude Code | 49.2% @58 k=5 | Best CC k=5, all improvements |
+| engine-v9 | 2026-03-25 | Python engine | 83.3% @12 | All-Opus, credits exhausted ($57) |
+| api-v13 | 2026-03-25 | Go backend | 0% | OAuth rejected, needs API credits |
+
+## Known Issues
+
+1. **OAuth tokens don't work** on raw Anthropic API — need `ANTHROPIC_API_KEY` with credits
+2. **Binary upload slow** — 28MB takes 5-15 min on Modal, use base64 fallback if hanging
+3. **Rate limit** — Opus at 30K tokens/min, use `-n 2` concurrency max
+4. **Cost** — all-Opus with thinking: ~$4.75/trial. With routing: ~$0.16/trial (projected)
