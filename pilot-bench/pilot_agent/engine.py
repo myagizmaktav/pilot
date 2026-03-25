@@ -1,17 +1,19 @@
 """
 Custom execution engine for Terminal Bench — direct Anthropic API, no Claude Code.
 
-Replaces the Claude Code CLI black box with full control over:
+Replaces the Claude Code CLI with full control over:
 - Progressive thinking budget (high early, low later)
 - Tool-call validation and correction
 - Loop detection (repeated edits, stuck commands)
 - Mandatory test verification
+- Context window management (prune old messages)
+- Prompt caching (cache_control on system)
 - Short bash timeouts with kill
 
 Architecture:
   Harbor → agent.py → this engine (via subprocess in container)
   Engine → Anthropic Messages API with tool_use
-  Tools: bash, read_file, write_file
+  Tools: bash, read_file, write_file, edit_file
 
 Usage:
   python3 engine.py --task "instruction" --project /app --model claude-opus-4-6
@@ -38,14 +40,23 @@ logger = logging.getLogger("engine")
 
 # --- Constants ---
 MAX_TURNS = 60
-BASH_TIMEOUT = 120  # seconds per command
-THINKING_HIGH_TURNS = 8  # extended thinking for first N turns
-THINKING_HIGH_BUDGET = 16000  # tokens for planning phase
-THINKING_LOW_BUDGET = 4000   # tokens for execution phase
+MAIN_TIMEOUT = 5400             # 90 min total budget
+BASH_TIMEOUT = 120              # seconds per command
+THINKING_HIGH_TURNS = 8         # extended thinking for first N turns
+THINKING_HIGH_BUDGET = 16000    # tokens for planning phase
+THINKING_LOW_BUDGET = 4000      # tokens for execution phase
 MAX_OUTPUT_TOKENS = 16000
-TEST_CHECK_INTERVAL = 8  # auto-run tests every N turns
-MAX_REPEATED_COMMANDS = 3  # loop detection threshold
-RESULT_JSON = "/logs/agent/pilot-result.json"
+TEST_CHECK_INTERVAL = 8         # auto-run tests every N turns
+MAX_REPEATED_COMMANDS = 3       # loop detection threshold
+CONTEXT_PRUNE_THRESHOLD = 150000  # estimated tokens before pruning
+CONTEXT_KEEP_TURNS = 12         # keep last N turns when pruning
+
+# Opus 4.6 pricing (per 1M tokens)
+INPUT_COST_PER_M = 15.0
+OUTPUT_COST_PER_M = 75.0
+
+# Result output path (overridden by --result-json)
+RESULT_JSON_PATH = "/logs/agent/pilot-result.json"
 
 
 # --- Tool Definitions ---
@@ -118,13 +129,38 @@ TOOLS = [
             "required": ["path", "content"],
         },
     },
+    {
+        "name": "edit_file",
+        "description": (
+            "Replace a specific string in a file. More precise than write_file "
+            "for small changes. The old_string must appear exactly once in the file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact text to find (must appear exactly once)",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement text",
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
 ]
 
 
 # --- Tool Execution ---
 def execute_bash(command: str, timeout: int = BASH_TIMEOUT, cwd: str = "/app") -> str:
     """Execute bash command with timeout."""
-    timeout = min(timeout, 600)  # hard cap
+    timeout = min(timeout, 600)
     try:
         result = subprocess.run(
             ["bash", "-c", command],
@@ -134,9 +170,8 @@ def execute_bash(command: str, timeout: int = BASH_TIMEOUT, cwd: str = "/app") -
             cwd=cwd,
         )
         output = result.stdout + result.stderr
-        # Cap output at 50KB to prevent context bloat
         if len(output) > 50000:
-            output = output[:25000] + "\n\n... [output truncated] ...\n\n" + output[-25000:]
+            output = output[:25000] + "\n\n... [truncated] ...\n\n" + output[-25000:]
         exit_info = f"\n[exit code: {result.returncode}]" if result.returncode != 0 else ""
         return output + exit_info
     except subprocess.TimeoutExpired:
@@ -175,6 +210,25 @@ def execute_write_file(path: str, content: str) -> str:
         return f"[ERROR writing {path}: {e}]"
 
 
+def execute_edit_file(path: str, old_string: str, new_string: str) -> str:
+    """Replace exact string in file. Must appear exactly once."""
+    try:
+        p = Path(path)
+        if not p.exists():
+            return f"[File not found: {path}]"
+        content = p.read_text(errors="replace")
+        count = content.count(old_string)
+        if count == 0:
+            return f"[old_string not found in {path}. Read the file first to get exact text.]"
+        if count > 1:
+            return f"[old_string appears {count} times in {path}. Provide more context to make it unique.]"
+        new_content = content.replace(old_string, new_string, 1)
+        p.write_text(new_content)
+        return f"[Edited {path}: replaced {len(old_string)} chars with {len(new_string)} chars]"
+    except Exception as e:
+        return f"[ERROR editing {path}: {e}]"
+
+
 def execute_tool(name: str, input_data: dict) -> str:
     """Dispatch tool call."""
     if name == "bash":
@@ -190,6 +244,12 @@ def execute_tool(name: str, input_data: dict) -> str:
         )
     elif name == "write_file":
         return execute_write_file(input_data["path"], input_data["content"])
+    elif name == "edit_file":
+        return execute_edit_file(
+            input_data["path"],
+            input_data["old_string"],
+            input_data["new_string"],
+        )
     else:
         return f"[Unknown tool: {name}]"
 
@@ -207,8 +267,6 @@ class LoopDetector:
         self.file_edit_counts[path] = self.file_edit_counts.get(path, 0) + 1
 
     def is_stuck(self) -> str | None:
-        """Returns warning message if loop detected, else None."""
-        # Check repeated identical commands
         if len(self.command_history) >= MAX_REPEATED_COMMANDS:
             recent = self.command_history[-MAX_REPEATED_COMMANDS:]
             if len(set(recent)) == 1:
@@ -216,37 +274,72 @@ class LoopDetector:
                     f"LOOP DETECTED: You ran '{recent[0][:80]}' {MAX_REPEATED_COMMANDS} times. "
                     "STOP. Try a completely different approach."
                 )
-
-        # Check excessive file edits
         for path, count in self.file_edit_counts.items():
             if count >= 5:
                 return (
                     f"LOOP DETECTED: You edited '{path}' {count} times without tests passing. "
                     "DELETE your approach and try something fundamentally different."
                 )
-
         return None
 
 
 # --- Test Runner ---
+def check_tests_passed(output: str) -> bool:
+    """Check pytest output for pass/fail. More robust than string matching."""
+    if re.search(r"\d+ passed", output) and not re.search(r"\d+ (failed|error)", output, re.IGNORECASE):
+        return True
+    return False
+
+
 def run_tests(cwd: str = "/app") -> tuple[bool, str]:
-    """Run pytest if test file exists. Returns (passed, output)."""
+    """Run pytest if test file exists."""
     test_file = "/tests/test_outputs.py"
     if not Path(test_file).exists():
         return False, "[No test file found]"
-
     output = execute_bash(
         f"cd {cwd} && python3 -m pytest {test_file} -v 2>&1",
         timeout=300,
         cwd=cwd,
     )
-    passed = "passed" in output and "failed" not in output and "error" not in output.lower()
-    return passed, output
+    return check_tests_passed(output), output
+
+
+# --- Context Management ---
+def estimate_tokens(messages: list) -> int:
+    """Rough token estimate: 4 chars ≈ 1 token."""
+    total = 0
+    for msg in messages:
+        if isinstance(msg.get("content"), str):
+            total += len(msg["content"]) // 4
+        elif isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict):
+                    total += len(json.dumps(block)) // 4
+                else:
+                    total += len(str(block)) // 4
+    return total
+
+
+def prune_messages(messages: list) -> list:
+    """Prune old messages to stay within context window."""
+    if len(messages) <= CONTEXT_KEEP_TURNS * 2:
+        return messages
+
+    # Keep first message (initial instruction) and last N turns
+    first = messages[0]
+    keep = messages[-(CONTEXT_KEEP_TURNS * 2):]
+
+    pruned_count = len(messages) - len(keep) - 1
+    summary = {
+        "role": "user",
+        "content": f"[Context pruned: {pruned_count} earlier messages removed to save space. Continue working on the task.]",
+    }
+
+    return [first, summary] + keep
 
 
 # --- System Prompt ---
 def build_system_prompt(task: str, env_context: str, patterns: str) -> str:
-    """Build the system prompt with task, env, and patterns."""
     parts = [
         "You are an expert software engineer solving a coding task in a sandboxed container.",
         "",
@@ -272,8 +365,8 @@ def build_system_prompt(task: str, env_context: str, patterns: str) -> str:
         "Phase 2 — IMPLEMENT:",
         "1. Start with the simplest working approach — brute force beats unfinished elegance",
         "2. Produce output files EARLY — partial output beats no output",
-        "3. Run tests after EVERY significant change",
-        "4. If tests pass → STOP IMMEDIATELY",
+        "3. Run tests after EVERY significant change: `cd /app && python3 -m pytest /tests/test_outputs.py -v`",
+        "4. If tests pass → STOP IMMEDIATELY (say 'TESTS PASSED' and stop)",
         "",
         "Phase 3 — RECOVER (if stuck):",
         "1. If same approach failed 3 times → DELETE and try completely different algorithm",
@@ -287,6 +380,8 @@ def build_system_prompt(task: str, env_context: str, patterns: str) -> str:
         "- Use --break-system-packages with pip",
         "- If a command runs >30s with no output, kill it",
         "- Once tests pass, STOP. No cleanup, no summary.",
+        "- Never retry the exact same failing command — change something first",
+        "- If you've written >500 words without executing code, STOP and write code NOW",
         "",
     ])
 
@@ -298,7 +393,6 @@ def build_system_prompt(task: str, env_context: str, patterns: str) -> str:
 
 # --- Load Learning DB Patterns ---
 def load_patterns(db_path: str = "/root/.pilot/data/pilot.db") -> str:
-    """Load patterns from SQLite learning DB."""
     if not Path(db_path).exists():
         return ""
     try:
@@ -319,9 +413,31 @@ def load_patterns(db_path: str = "/root/.pilot/data/pilot.db") -> str:
         return ""
 
 
+# --- API Call with Retry ---
+def api_call_with_retry(client, kwargs, max_retries=3):
+    """Call API with exponential backoff on rate limits and overload."""
+    backoffs = [10, 30, 60]
+    for attempt in range(max_retries + 1):
+        try:
+            return client.messages.create(**kwargs)
+        except anthropic.RateLimitError as e:
+            if attempt < max_retries:
+                wait = backoffs[min(attempt, len(backoffs) - 1)]
+                logger.warning(f"Rate limited, waiting {wait}s (attempt {attempt + 1})")
+                time.sleep(wait)
+            else:
+                raise
+        except anthropic.APIStatusError as e:
+            if e.status_code == 529 and attempt < max_retries:
+                wait = backoffs[min(attempt, len(backoffs) - 1)]
+                logger.warning(f"API overloaded (529), waiting {wait}s (attempt {attempt + 1})")
+                time.sleep(wait)
+            else:
+                raise
+
+
 # --- Main Engine ---
-def run(task: str, project: str, model: str, api_key: str):
-    """Main execution loop."""
+def run(task: str, project: str, model: str, api_key: str) -> bool:
     client = anthropic.Anthropic(api_key=api_key)
     loop_detector = LoopDetector()
     start_time = time.time()
@@ -333,8 +449,16 @@ def run(task: str, project: str, model: str, api_key: str):
         env_context = env_file.read_text()[:1200]
 
     patterns = load_patterns()
-
     system_prompt = build_system_prompt(task, env_context, patterns)
+
+    # System prompt with cache control for prompt caching
+    system = [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
     messages = []
     total_input_tokens = 0
@@ -346,23 +470,17 @@ def run(task: str, project: str, model: str, api_key: str):
 
     for turn in range(MAX_TURNS):
         elapsed = time.time() - start_time
-        if elapsed > MAIN_TIMEOUT - 120:  # stop 2 min before timeout
+        if elapsed > MAIN_TIMEOUT - 120:
             logger.warning(f"Approaching timeout ({elapsed:.0f}s), stopping")
             break
 
         # Progressive thinking budget
-        if turn < THINKING_HIGH_TURNS:
-            thinking_budget = THINKING_HIGH_BUDGET
-        else:
-            thinking_budget = THINKING_LOW_BUDGET
+        thinking_budget = THINKING_HIGH_BUDGET if turn < THINKING_HIGH_TURNS else THINKING_LOW_BUDGET
 
         # Check for loops
         loop_warning = loop_detector.is_stuck()
         if loop_warning:
-            messages.append({
-                "role": "user",
-                "content": f"⚠️ {loop_warning}",
-            })
+            messages.append({"role": "user", "content": f"⚠️ {loop_warning}"})
 
         # Auto-test check
         if turn > 0 and turn % TEST_CHECK_INTERVAL == 0 and not tests_passed:
@@ -374,10 +492,15 @@ def run(task: str, project: str, model: str, api_key: str):
             else:
                 messages.append({
                     "role": "user",
-                    "content": f"[AUTO-TEST CHECK at turn {turn}]\n{test_output}\n\nTests are failing. Fix the issues.",
+                    "content": f"[AUTO-TEST at turn {turn}]\n{test_output}\n\nTests failing. Fix the issues.",
                 })
 
-        # Add initial user message
+        # Context management — prune if getting large
+        if estimate_tokens(messages) > CONTEXT_PRUNE_THRESHOLD:
+            messages = prune_messages(messages)
+            logger.info(f"Context pruned at turn {turn}")
+
+        # Initial message
         if turn == 0:
             messages.append({
                 "role": "user",
@@ -389,24 +512,19 @@ def run(task: str, project: str, model: str, api_key: str):
             kwargs = {
                 "model": model,
                 "max_tokens": MAX_OUTPUT_TOKENS,
-                "system": system_prompt,
+                "system": system,
                 "tools": TOOLS,
                 "messages": messages,
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget,
+                },
             }
 
-            # Extended thinking (budget-based)
-            kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": thinking_budget,
-            }
+            response = api_call_with_retry(client, kwargs)
 
-            response = client.messages.create(**kwargs)
-
-        except anthropic.APIError as e:
+        except Exception as e:
             logger.error(f"API error at turn {turn}: {e}")
-            if "overloaded" in str(e).lower():
-                time.sleep(10)
-                continue
             break
 
         # Track tokens
@@ -420,7 +538,6 @@ def run(task: str, project: str, model: str, api_key: str):
         # Check stop reason
         if response.stop_reason == "end_turn":
             logger.info(f"Agent finished at turn {turn}")
-            # Run final test check
             if not tests_passed:
                 passed, _ = run_tests(project)
                 tests_passed = passed
@@ -437,7 +554,7 @@ def run(task: str, project: str, model: str, api_key: str):
                     # Track for loop detection
                     if tool_name == "bash":
                         loop_detector.record_command(tool_input.get("command", ""))
-                    elif tool_name == "write_file":
+                    elif tool_name in ("write_file", "edit_file"):
                         loop_detector.record_file_write(tool_input.get("path", ""))
 
                     # Execute
@@ -446,9 +563,9 @@ def run(task: str, project: str, model: str, api_key: str):
 
                     # Check if tests were run and passed
                     if tool_name == "bash" and "pytest" in tool_input.get("command", ""):
-                        if "passed" in result and "failed" not in result:
+                        if check_tests_passed(result):
                             tests_passed = True
-                            logger.info("Tests passed via agent's own pytest run!")
+                            logger.info("Tests passed via agent's pytest run!")
 
                     tool_results.append({
                         "type": "tool_result",
@@ -458,7 +575,6 @@ def run(task: str, project: str, model: str, api_key: str):
 
             messages.append({"role": "user", "content": tool_results})
 
-            # Early exit if tests passed
             if tests_passed:
                 logger.info(f"Tests passed — stopping at turn {turn}")
                 break
@@ -466,47 +582,48 @@ def run(task: str, project: str, model: str, api_key: str):
             logger.warning(f"Unexpected stop_reason: {response.stop_reason}")
             break
 
-    # Final test run if not yet confirmed
+    # Final test if not confirmed
     if not tests_passed:
         tests_passed, _ = run_tests(project)
 
     elapsed = time.time() - start_time
+    cost = (total_input_tokens * INPUT_COST_PER_M + total_output_tokens * OUTPUT_COST_PER_M) / 1_000_000
+
     logger.info(
         f"Engine done: turns={turn+1}, passed={tests_passed}, "
         f"tokens_in={total_input_tokens}, tokens_out={total_output_tokens}, "
-        f"elapsed={elapsed:.0f}s"
+        f"cost=${cost:.2f}, elapsed={elapsed:.0f}s"
     )
 
-    # Write result JSON (compatible with Pilot's format)
+    # Write result JSON
     result = {
         "Success": tests_passed,
         "TokensInput": total_input_tokens,
         "TokensOutput": total_output_tokens,
-        "EstimatedCostUSD": 0.0,  # TODO: calculate from token counts
+        "EstimatedCostUSD": round(cost, 4),
         "Turns": turn + 1,
-        "ElapsedSeconds": elapsed,
+        "ElapsedSeconds": round(elapsed, 1),
     }
-    result_path = Path(RESULT_JSON)
+    result_path = Path(RESULT_JSON_PATH)
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(json.dumps(result, indent=2))
-    logger.info(f"Result written to {RESULT_JSON}")
+    logger.info(f"Result written to {RESULT_JSON_PATH}")
 
     return tests_passed
 
 
 def main():
-    global RESULT_JSON
+    global RESULT_JSON_PATH
 
     parser = argparse.ArgumentParser(description="Pilot Bench Engine")
     parser.add_argument("--task", required=True, help="Task instruction")
     parser.add_argument("--project", default="/app", help="Project directory")
     parser.add_argument("--model", default="claude-opus-4-6", help="Model ID")
-    parser.add_argument("--result-json", default=RESULT_JSON, help="Result output path")
+    parser.add_argument("--result-json", default=RESULT_JSON_PATH, help="Result output path")
     args = parser.parse_args()
 
-    RESULT_JSON = args.result_json
+    RESULT_JSON_PATH = args.result_json
 
-    # Resolve API key
     api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("PILOT_ENGINE_API_KEY")
     if not api_key:
         logger.error("No API key found. Set ANTHROPIC_API_KEY or PILOT_ENGINE_API_KEY")
