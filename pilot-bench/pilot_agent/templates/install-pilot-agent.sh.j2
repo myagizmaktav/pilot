@@ -42,18 +42,8 @@ fi
 
 echo "Node version: $(node --version)"
 
-# Install Claude Code CLI (pinned — 2.1.78+ has TypeError regression)
-echo "Installing Claude Code CLI..."
-npm install -g @anthropic-ai/claude-code@2.1.74 2>&1
-
-if ! command -v claude &> /dev/null; then
-    export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"
-    if ! command -v claude &> /dev/null; then
-        echo "ERROR: Claude Code CLI installation failed"
-        exit 1
-    fi
-fi
-echo "Claude Code version: $(claude --version 2>/dev/null || echo 'unknown')"
+# Claude Code no longer needed — using custom engine with direct Anthropic API
+echo "Skipping Claude Code install (custom engine mode)"
 
 # Install common utilities
 echo "Installing common utilities..."

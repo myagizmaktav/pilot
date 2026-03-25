@@ -44,33 +44,28 @@ class PilotAgent(BaseInstalledAgent):
         return Path(__file__).parent / "templates" / "install-pilot-agent.sh.j2"
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
-        """Single command: run pilot task --local."""
+        """Run custom engine — direct Anthropic API, no Claude Code."""
         env = self._build_env()
         model = self._resolve_model()
 
         # Escape instruction for shell (single quotes with escaping)
         safe_instruction = instruction.replace("'", "'\\''")
 
+        # Resolve API key: prefer dedicated key, fall back to OAuth-derived
+        api_key = os.environ.get("PILOT_ENGINE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
+
         return [ExecInput(
             command=(
-                f"pilot task '{safe_instruction}' "
-                f"--local "
+                f"python3 /opt/pilot-agent/engine.py "
+                f"--task '{safe_instruction}' "
                 f"--project /app "
-                f"--verbose "
+                f"--model {model} "
                 f"--result-json {RESULT_JSON}"
             ),
             cwd="/app",
             env={
                 **env,
-                "IS_SANDBOX": "1",
-                # 128K output tokens — default 32K kills complex tasks mid-thinking
-                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
-                # Effort level controlled by Pilot's --effort flag from routing config.
-                # Do NOT set CLAUDE_CODE_EFFORT_LEVEL — it overrides routing.
-                # 1M context window: enabled by default since Claude Code v2.1.75
-                # (March 2026). Gives competitive advantage — compaction at 835K vs
-                # 180K means agent keeps full conversation through complex tasks.
-                # To disable: "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
+                "ANTHROPIC_API_KEY": api_key,
             },
             timeout_sec=MAIN_TIMEOUT,
         )]
@@ -146,8 +141,7 @@ class PilotAgent(BaseInstalledAgent):
         env: dict[str, str] = {}
         for key in [
             "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            "CLAUDE_CODE_OAUTH_TOKEN",
+            "PILOT_ENGINE_API_KEY",
         ]:
             if key in os.environ:
                 env[key] = os.environ[key]
@@ -243,28 +237,26 @@ memory:
         # Base setup: renders install-pilot-agent.sh.j2, uploads, executes
         await super().setup(environment)
 
-        # Upload pre-built pilot binary
-        binary_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
-        if binary_path.exists():
+        # Upload custom engine (replaces pilot binary + Claude Code)
+        engine_path = Path(__file__).parent / "engine.py"
+        if engine_path.exists():
+            await environment.exec(command="mkdir -p /opt/pilot-agent")
             await environment.upload_file(
-                source_path=binary_path,
-                target_path="/usr/local/bin/pilot",
+                source_path=engine_path,
+                target_path="/opt/pilot-agent/engine.py",
             )
-            await environment.exec(command="chmod +x /usr/local/bin/pilot")
-            logger.info("Uploaded pilot binary to /usr/local/bin/pilot")
+            logger.info("Uploaded custom engine to /opt/pilot-agent/engine.py")
         else:
-            logger.error(f"Pilot binary not found at {binary_path}")
-            raise FileNotFoundError(
-                f"Pilot binary not found: {binary_path}. "
-                f"Run 'make bench-binary' first."
-            )
+            raise FileNotFoundError(f"Engine not found: {engine_path}")
 
-        # Write config matching production settings
-        model = self._resolve_model()
-        config = self._build_config(model)
+        # Install anthropic SDK in container
         await environment.exec(
-            command=f"mkdir -p /root/.pilot && cat > /root/.pilot/config.yaml << 'CFGEOF'\n{config}CFGEOF",
+            command="pip install --break-system-packages anthropic 2>&1 | tail -3",
+            timeout_sec=120,
         )
+
+        # Create pilot data dir for learning DB
+        await environment.exec(command="mkdir -p /root/.pilot/data")
 
         # Upload pre-seeded learning DB (curated patterns from bench failure analysis)
         db_path = Path(__file__).parent / "data" / "pilot.db"
