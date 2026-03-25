@@ -43,9 +43,9 @@ MAX_TURNS = 60
 MAIN_TIMEOUT = 5400             # 90 min total budget
 BASH_TIMEOUT = 120              # seconds per command
 THINKING_HIGH_TURNS = 8         # extended thinking for first N turns
-THINKING_HIGH_BUDGET = 16000    # tokens for planning phase
-THINKING_LOW_BUDGET = 4000      # tokens for execution phase
-MAX_OUTPUT_TOKENS = 16000
+THINKING_HIGH_BUDGET = 10000    # tokens for planning phase
+THINKING_LOW_BUDGET = 3000      # tokens for execution phase
+MAX_OUTPUT_TOKENS = 16000       # must be > thinking budget
 TEST_CHECK_INTERVAL = 8         # auto-run tests every N turns
 MAX_REPEATED_COMMANDS = 3       # loop detection threshold
 CONTEXT_PRUNE_THRESHOLD = 150000  # estimated tokens before pruning
@@ -516,7 +516,7 @@ def run(task: str, project: str, model: str, api_key: str) -> bool:
                 "tools": TOOLS,
                 "messages": messages,
                 "thinking": {
-                    "type": "enabled",
+                    "type": "adaptive",
                     "budget_tokens": thinking_budget,
                 },
             }
