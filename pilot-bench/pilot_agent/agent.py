@@ -231,31 +231,42 @@ memory:
 
         logger.info("Starting agent setup (binary + config + tests)...")
 
-        # Upload pilot binary in chunks to avoid Modal upload_file hang on large files.
-        # Split into 2MB chunks, upload each, then reassemble in container.
+        # Upload pilot binary — try upload_file first, fall back to base64 exec.
         raw_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
         if not raw_path.exists():
             raise FileNotFoundError("Pilot binary not found. Run 'make bench-binary' first.")
 
-        import base64
-        CHUNK_SIZE = 2 * 1024 * 1024  # 2MB chunks
-        data = raw_path.read_bytes()
-        n_chunks = (len(data) + CHUNK_SIZE - 1) // CHUNK_SIZE
-        logger.info(f"Uploading pilot binary in {n_chunks} chunks ({len(data) // 1024 // 1024}MB)...")
-
-        await environment.exec(command="rm -f /tmp/pilot_chunks_*")
-        for i in range(n_chunks):
-            chunk = data[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
-            b64 = base64.b64encode(chunk).decode()
+        logger.info(f"Uploading pilot binary ({raw_path.stat().st_size // 1024 // 1024}MB)...")
+        try:
+            import asyncio
+            # upload_file with a 120s timeout to detect Modal hangs
+            await asyncio.wait_for(
+                environment.upload_file(source_path=raw_path, target_path="/usr/local/bin/pilot"),
+                timeout=120,
+            )
+            await environment.exec(command="chmod +x /usr/local/bin/pilot")
+            logger.info("Binary uploaded via upload_file")
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"upload_file failed ({e}), falling back to base64 pipe")
+            # Fallback: write binary via base64-encoded pipe to file
+            import base64
+            data = raw_path.read_bytes()
+            b64 = base64.b64encode(data).decode()
+            # Write base64 to a temp file, then decode
+            # Split into 50KB writes to stay under exec limits
+            CHUNK = 50000
+            await environment.exec(command="rm -f /tmp/pilot.b64 /tmp/pilot_bin")
+            for i in range(0, len(b64), CHUNK):
+                chunk = b64[i:i + CHUNK]
+                await environment.exec(
+                    command=f"cat >> /tmp/pilot.b64 << 'B64EOF'\n{chunk}\nB64EOF",
+                    timeout_sec=10,
+                )
             await environment.exec(
-                command=f"echo '{b64}' | base64 -d >> /tmp/pilot_raw",
+                command="base64 -d /tmp/pilot.b64 > /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot && rm /tmp/pilot.b64",
                 timeout_sec=30,
             )
-            if (i + 1) % 5 == 0:
-                logger.info(f"  chunk {i + 1}/{n_chunks}")
-
-        await environment.exec(command="mv /tmp/pilot_raw /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
-        logger.info("Binary uploaded via chunked base64")
+            logger.info("Binary uploaded via base64 fallback")
 
         # Write config
         logger.info("Writing config...")
