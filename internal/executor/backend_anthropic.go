@@ -331,7 +331,10 @@ func (b *AnthropicBackend) callAPI(ctx context.Context, req *apiRequest) (*apiRe
 		httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 		httpReq.Header.Set("Accept", "text/event-stream")
 
-		if strings.HasPrefix(b.apiKey, "sk-ant-") {
+		// OAuth tokens (sk-ant-oat*) use Bearer auth, API keys (sk-ant-api*) use x-api-key
+		if strings.Contains(b.apiKey, "-oat") {
+			httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
+		} else if strings.HasPrefix(b.apiKey, "sk-ant-") {
 			httpReq.Header.Set("x-api-key", b.apiKey)
 		} else {
 			httpReq.Header.Set("Authorization", "Bearer "+b.apiKey)
