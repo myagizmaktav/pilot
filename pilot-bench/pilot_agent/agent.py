@@ -242,21 +242,29 @@ memory:
 
         logger.info("Starting agent setup (binary + config + tests)...")
 
-        # Upload pilot binary — try upload_file first, fall back to base64 exec.
+        # Upload pilot binary — prefer compressed (15MB vs 28MB, ~2x faster upload).
+        gz_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64.gz"
         raw_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
-        if not raw_path.exists():
+
+        upload_path = gz_path if gz_path.exists() else raw_path
+        if not upload_path.exists():
             raise FileNotFoundError("Pilot binary not found. Run 'make bench-binary' first.")
 
-        logger.info(f"Uploading pilot binary ({raw_path.stat().st_size // 1024 // 1024}MB)...")
+        is_compressed = upload_path.suffix == ".gz"
+        target = "/tmp/pilot.gz" if is_compressed else "/usr/local/bin/pilot"
+        logger.info(f"Uploading pilot binary ({upload_path.stat().st_size // 1024 // 1024}MB, {'compressed' if is_compressed else 'raw'})...")
+
         try:
             import asyncio
-            # upload_file with a 120s timeout to detect Modal hangs
             await asyncio.wait_for(
-                environment.upload_file(source_path=raw_path, target_path="/usr/local/bin/pilot"),
-                timeout=120,
+                environment.upload_file(source_path=upload_path, target_path=target),
+                timeout=180,
             )
-            await environment.exec(command="chmod +x /usr/local/bin/pilot")
-            logger.info("Binary uploaded via upload_file")
+            if is_compressed:
+                await environment.exec(command="gunzip -f /tmp/pilot.gz && mv /tmp/pilot /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
+            else:
+                await environment.exec(command="chmod +x /usr/local/bin/pilot")
+            logger.info("Binary uploaded")
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"upload_file failed ({e}), falling back to base64 pipe")
             # Fallback: write binary via base64-encoded pipe to file
