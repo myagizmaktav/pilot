@@ -414,26 +414,37 @@ def load_patterns(db_path: str = "/root/.pilot/data/pilot.db") -> str:
 
 
 # --- API Call with Retry (Streaming) ---
-def api_call_with_retry(client, kwargs, max_retries=3):
-    """Call API with streaming (required for Opus + thinking) and retry."""
-    backoffs = [10, 30, 60]
+def api_call_with_retry(client, kwargs, max_retries=5):
+    """Call API with streaming (required for Opus + thinking) and retry.
+
+    Handles: rate limits (429), overloaded (529), and overloaded_error responses.
+    Uses longer backoffs to respect 30K input tokens/min rate limit.
+    """
+    backoffs = [30, 60, 90, 120, 180]
     for attempt in range(max_retries + 1):
         try:
-            # Opus with extended thinking requires streaming
             with client.messages.stream(**kwargs) as stream:
                 response = stream.get_final_message()
             return response
         except anthropic.RateLimitError as e:
             if attempt < max_retries:
                 wait = backoffs[min(attempt, len(backoffs) - 1)]
-                logger.warning(f"Rate limited, waiting {wait}s (attempt {attempt + 1})")
+                logger.warning(f"Rate limited, waiting {wait}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(wait)
             else:
                 raise
         except anthropic.APIStatusError as e:
-            if e.status_code == 529 and attempt < max_retries:
+            if e.status_code in (429, 529) and attempt < max_retries:
                 wait = backoffs[min(attempt, len(backoffs) - 1)]
-                logger.warning(f"API overloaded (529), waiting {wait}s (attempt {attempt + 1})")
+                logger.warning(f"API error {e.status_code}, waiting {wait}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait)
+            else:
+                raise
+        except anthropic.APIError as e:
+            # Catch overloaded_error and other transient API errors
+            if "overloaded" in str(e).lower() and attempt < max_retries:
+                wait = backoffs[min(attempt, len(backoffs) - 1)]
+                logger.warning(f"API overloaded, waiting {wait}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(wait)
             else:
                 raise
