@@ -495,6 +495,8 @@ def run(task: str, project: str, model: str, api_key: str):
 
 
 def main():
+    global RESULT_JSON
+
     parser = argparse.ArgumentParser(description="Pilot Bench Engine")
     parser.add_argument("--task", required=True, help="Task instruction")
     parser.add_argument("--project", default="/app", help="Project directory")
@@ -502,7 +504,6 @@ def main():
     parser.add_argument("--result-json", default=RESULT_JSON, help="Result output path")
     args = parser.parse_args()
 
-    global RESULT_JSON
     RESULT_JSON = args.result_json
 
     # Resolve API key
