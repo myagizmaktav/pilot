@@ -70,15 +70,22 @@ Harbor Orchestrator
 - [x] Learning DB still uploaded to `/root/.pilot/data/pilot.db`
 - [x] Env bootstrap still runs in `setup()`
 
-### Phase 4: Validation 🚧
-- [ ] 3-task validation on Modal (v4 running now)
-- [ ] Debug any failures from logs
-- [ ] Iterate until 3/3 pass
+### Phase 4: Custom Engine Validation ✅
+- [x] Python engine: 3/3 validation passed (engine-v7)
+- [x] Python engine: 83.3% at 12 trials (engine-v9) — credits exhausted
+- [x] Go backend: built, compiles, tests pass
+- [x] Go backend: OAuth rejected by raw API — blocked on credits
 
-### Phase 5: Full Run
-- [ ] k=1 run (89 tasks) — baseline score
-- [ ] k=5 run (445 trials) — leaderboard submission
-- [ ] Post-run failure analysis
+### Phase 5: CC Backend Fallback ✅
+- [x] Reverted to CC backend with optimized config
+- [x] Applied engine learnings: model routing, session resume, 15m heartbeat
+- [x] v33 validation running — 1/3 passed (chess-best-move) so far
+
+### Phase 6: Full Run
+- [ ] v33 validation passes 3/3
+- [ ] k=5 run (445 trials) with CC backend
+- [ ] When credits available: switch to anthropic-api backend
+- [ ] Leaderboard submission
 
 ---
 
