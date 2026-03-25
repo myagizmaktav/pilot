@@ -231,21 +231,31 @@ memory:
 
         logger.info("Starting agent setup (binary + config + tests)...")
 
-        # Upload pre-built pilot binary (compressed to speed up Modal upload)
-        gz_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64.gz"
+        # Upload pilot binary in chunks to avoid Modal upload_file hang on large files.
+        # Split into 2MB chunks, upload each, then reassemble in container.
         raw_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
-        if gz_path.exists():
-            logger.info(f"Uploading compressed binary ({gz_path.stat().st_size // 1024}KB)...")
-            await environment.upload_file(source_path=gz_path, target_path="/tmp/pilot.gz")
-            await environment.exec(command="gunzip -f /tmp/pilot.gz && mv /tmp/pilot /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
-            logger.info("Binary uploaded + decompressed")
-        elif raw_path.exists():
-            logger.info(f"Uploading binary ({raw_path.stat().st_size // 1024 // 1024}MB)...")
-            await environment.upload_file(source_path=raw_path, target_path="/usr/local/bin/pilot")
-            await environment.exec(command="chmod +x /usr/local/bin/pilot")
-            logger.info("Binary uploaded")
-        else:
+        if not raw_path.exists():
             raise FileNotFoundError("Pilot binary not found. Run 'make bench-binary' first.")
+
+        import base64
+        CHUNK_SIZE = 2 * 1024 * 1024  # 2MB chunks
+        data = raw_path.read_bytes()
+        n_chunks = (len(data) + CHUNK_SIZE - 1) // CHUNK_SIZE
+        logger.info(f"Uploading pilot binary in {n_chunks} chunks ({len(data) // 1024 // 1024}MB)...")
+
+        await environment.exec(command="rm -f /tmp/pilot_chunks_*")
+        for i in range(n_chunks):
+            chunk = data[i * CHUNK_SIZE : (i + 1) * CHUNK_SIZE]
+            b64 = base64.b64encode(chunk).decode()
+            await environment.exec(
+                command=f"echo '{b64}' | base64 -d >> /tmp/pilot_raw",
+                timeout_sec=30,
+            )
+            if (i + 1) % 5 == 0:
+                logger.info(f"  chunk {i + 1}/{n_chunks}")
+
+        await environment.exec(command="mv /tmp/pilot_raw /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
+        logger.info("Binary uploaded via chunked base64")
 
         # Write config
         logger.info("Writing config...")
