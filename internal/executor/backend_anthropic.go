@@ -568,13 +568,20 @@ func (b *AnthropicBackend) Execute(ctx context.Context, opts ExecuteOptions) (*B
 			thinkingBudget = 15000
 		}
 
+		// Disable thinking for non-Opus models (Haiku/Sonnet don't benefit as much,
+		// and it avoids compatibility issues with older model versions)
+		useThinking := strings.Contains(model, "opus")
+
 		req := &apiRequest{
 			Model:     model,
-			MaxTokens: thinkingBudget + maxOutputTokens,
-			System:    opts.Prompt, // System prompt is the task prompt
+			MaxTokens: maxOutputTokens,
+			System:    opts.Prompt,
 			Messages:  messages,
 			Tools:     apiTools,
-			Thinking:  &apiThinking{Type: "enabled", BudgetTokens: thinkingBudget},
+		}
+		if useThinking {
+			req.MaxTokens = thinkingBudget + maxOutputTokens
+			req.Thinking = &apiThinking{Type: "enabled", BudgetTokens: thinkingBudget}
 		}
 
 		// First message has prompt as system, subsequent don't repeat it
@@ -588,7 +595,9 @@ func (b *AnthropicBackend) Execute(ctx context.Context, opts ExecuteOptions) (*B
 			req.System = opts.Prompt
 		}
 
-		slog.Info("API call", slog.Int("turn", turn), slog.String("model", model), slog.Int("thinking", thinkingBudget))
+		slog.Info("API call", slog.Int("turn", turn), slog.String("model", model),
+			slog.Bool("thinking", useThinking), slog.Int("budget", thinkingBudget),
+			slog.String("effort", opts.Effort))
 
 		response, err := b.callAPI(ctx, req)
 		if err != nil {

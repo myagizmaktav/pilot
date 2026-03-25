@@ -169,8 +169,8 @@ executor:
     enabled: false
   model_routing:
     enabled: true
-    trivial: "{model}"
-    simple: "{model}"
+    trivial: "claude-haiku-4-5-20251001"
+    simple: "claude-sonnet-4-6"
     medium: "{model}"
     complex: "{model}"
   timeout:
