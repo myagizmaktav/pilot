@@ -44,28 +44,25 @@ class PilotAgent(BaseInstalledAgent):
         return Path(__file__).parent / "templates" / "install-pilot-agent.sh.j2"
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
-        """Run custom engine — direct Anthropic API, no Claude Code."""
+        """Run Pilot Go binary with direct Anthropic API backend."""
         env = self._build_env()
         model = self._resolve_model()
 
         # Escape instruction for shell (single quotes with escaping)
         safe_instruction = instruction.replace("'", "'\\''")
 
-        # Resolve API key: prefer dedicated key, fall back to OAuth-derived
-        api_key = os.environ.get("PILOT_ENGINE_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
-
         return [ExecInput(
             command=(
-                f"python3 /opt/pilot-agent/engine.py "
-                f"--task '{safe_instruction}' "
+                f"pilot task '{safe_instruction}' "
+                f"--local "
                 f"--project /app "
-                f"--model {model} "
+                f"--verbose "
                 f"--result-json {RESULT_JSON}"
             ),
             cwd="/app",
             env={
                 **env,
-                "ANTHROPIC_API_KEY": api_key,
+                "IS_SANDBOX": "1",
             },
             timeout_sec=MAIN_TIMEOUT,
         )]
@@ -166,15 +163,9 @@ class PilotAgent(BaseInstalledAgent):
 orchestrator:
   model: "{model}"
 executor:
-  type: "claude-code"
-  claude_code:
-    command: claude
-    use_structured_output: true
+  type: "anthropic-api"
   hooks:
-    enabled: true
-    run_tests_on_stop: true
-    block_destructive: true
-    lint_on_save: false
+    enabled: false
   model_routing:
     enabled: true
     trivial: "{model}"
@@ -237,26 +228,28 @@ memory:
         # Base setup: renders install-pilot-agent.sh.j2, uploads, executes
         await super().setup(environment)
 
-        # Upload custom engine (replaces pilot binary + Claude Code)
-        engine_path = Path(__file__).parent / "engine.py"
-        if engine_path.exists():
-            await environment.exec(command="mkdir -p /opt/pilot-agent")
+        # Upload pre-built pilot binary (now with anthropic-api backend)
+        binary_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
+        if binary_path.exists():
             await environment.upload_file(
-                source_path=engine_path,
-                target_path="/opt/pilot-agent/engine.py",
+                source_path=binary_path,
+                target_path="/usr/local/bin/pilot",
             )
-            logger.info("Uploaded custom engine to /opt/pilot-agent/engine.py")
+            await environment.exec(command="chmod +x /usr/local/bin/pilot")
+            logger.info("Uploaded pilot binary to /usr/local/bin/pilot")
         else:
-            raise FileNotFoundError(f"Engine not found: {engine_path}")
+            logger.error(f"Pilot binary not found at {binary_path}")
+            raise FileNotFoundError(
+                f"Pilot binary not found: {binary_path}. "
+                f"Run 'make bench-binary' first."
+            )
 
-        # Install anthropic SDK in container
+        # Write config with anthropic-api backend
+        model = self._resolve_model()
+        config = self._build_config(model)
         await environment.exec(
-            command="pip install --break-system-packages anthropic 2>&1 | tail -3",
-            timeout_sec=120,
+            command=f"mkdir -p /root/.pilot && cat > /root/.pilot/config.yaml << 'CFGEOF'\n{config}CFGEOF",
         )
-
-        # Create pilot data dir for learning DB
-        await environment.exec(command="mkdir -p /root/.pilot/data")
 
         # Upload pre-seeded learning DB (curated patterns from bench failure analysis)
         db_path = Path(__file__).parent / "data" / "pilot.db"
