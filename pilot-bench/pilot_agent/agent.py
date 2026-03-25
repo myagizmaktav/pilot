@@ -139,6 +139,7 @@ class PilotAgent(BaseInstalledAgent):
         for key in [
             "ANTHROPIC_API_KEY",
             "PILOT_ENGINE_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
         ]:
             if key in os.environ:
                 env[key] = os.environ[key]

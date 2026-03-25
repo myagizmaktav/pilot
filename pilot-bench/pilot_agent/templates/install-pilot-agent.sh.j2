@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-echo "=== Pilot Real Agent: Installing Claude Code + Pilot binary ==="
+echo "=== Pilot Agent Setup (anthropic-api backend) ==="
 
-# DNS fallback for Daytona sandboxes
+# DNS fallback
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf 2>/dev/null || true
 
 # Detect OS
@@ -15,35 +15,7 @@ else
 fi
 echo "Detected OS: $OS_ID"
 
-# Install Node.js + npm if not present
-if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
-    echo "Installing Node.js + npm..."
-    case "$OS_ID" in
-        alpine)
-            apk add --no-cache nodejs npm
-            ;;
-        ubuntu|debian)
-            apt-get update -qq && apt-get install -y -qq nodejs npm
-            ;;
-        fedora|rhel|centos)
-            dnf install -y nodejs npm 2>/dev/null || yum install -y nodejs npm
-            ;;
-        *)
-            if command -v curl &> /dev/null; then
-                curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-                apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm
-            else
-                echo "ERROR: Cannot install Node.js"
-                exit 1
-            fi
-            ;;
-    esac
-fi
-
-echo "Node version: $(node --version)"
-
-# Claude Code no longer needed — using custom engine with direct Anthropic API
-echo "Skipping Claude Code install (custom engine mode)"
+# No Node.js or Claude Code needed — Go binary calls Anthropic API directly
 
 # Install common utilities
 echo "Installing common utilities..."
