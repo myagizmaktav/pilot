@@ -413,13 +413,16 @@ def load_patterns(db_path: str = "/root/.pilot/data/pilot.db") -> str:
         return ""
 
 
-# --- API Call with Retry ---
+# --- API Call with Retry (Streaming) ---
 def api_call_with_retry(client, kwargs, max_retries=3):
-    """Call API with exponential backoff on rate limits and overload."""
+    """Call API with streaming (required for Opus + thinking) and retry."""
     backoffs = [10, 30, 60]
     for attempt in range(max_retries + 1):
         try:
-            return client.messages.create(**kwargs)
+            # Opus with extended thinking requires streaming
+            with client.messages.stream(**kwargs) as stream:
+                response = stream.get_final_message()
+            return response
         except anthropic.RateLimitError as e:
             if attempt < max_retries:
                 wait = backoffs[min(attempt, len(backoffs) - 1)]
