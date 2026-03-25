@@ -15,7 +15,40 @@ else
 fi
 echo "Detected OS: $OS_ID"
 
-# No Node.js or Claude Code needed — Go binary calls Anthropic API directly
+# Install Node.js + npm (required for Claude Code CLI)
+if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+    echo "Installing Node.js + npm..."
+    case "$OS_ID" in
+        alpine)
+            apk add --no-cache nodejs npm
+            ;;
+        ubuntu|debian)
+            apt-get update -qq && apt-get install -y -qq nodejs npm
+            ;;
+        fedora|rhel|centos)
+            dnf install -y nodejs npm 2>/dev/null || yum install -y nodejs npm
+            ;;
+        *)
+            if command -v curl &> /dev/null; then
+                curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+                apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm
+            else
+                echo "ERROR: Cannot install Node.js"
+                exit 1
+            fi
+            ;;
+    esac
+fi
+echo "Node version: $(node --version)"
+
+# Install Claude Code CLI (pinned — 2.1.78+ has TypeError on Node 18)
+echo "Installing Claude Code CLI..."
+npm install -g @anthropic-ai/claude-code@2.1.74 2>&1
+
+if ! command -v claude &> /dev/null; then
+    export PATH="$PATH:/usr/local/bin:/usr/bin:$(npm root -g)/.bin"
+fi
+echo "Claude Code version: $(claude --version 2>/dev/null || echo 'unknown')"
 
 # Install common utilities
 echo "Installing common utilities..."

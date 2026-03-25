@@ -44,9 +44,8 @@ class PilotAgent(BaseInstalledAgent):
         return Path(__file__).parent / "templates" / "install-pilot-agent.sh.j2"
 
     def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
-        """Run Pilot Go binary with direct Anthropic API backend."""
+        """Run Pilot Go binary with Claude Code backend (OAuth auth)."""
         env = self._build_env()
-        model = self._resolve_model()
 
         # Escape instruction for shell (single quotes with escaping)
         safe_instruction = instruction.replace("'", "'\\''")
@@ -63,6 +62,9 @@ class PilotAgent(BaseInstalledAgent):
             env={
                 **env,
                 "IS_SANDBOX": "1",
+                # CC uses OAuth token internally for API calls
+                # 54K output tokens — default 32K kills complex tasks mid-thinking
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
             },
             timeout_sec=MAIN_TIMEOUT,
         )]
@@ -164,9 +166,18 @@ class PilotAgent(BaseInstalledAgent):
 orchestrator:
   model: "{model}"
 executor:
-  type: "anthropic-api"
+  type: "claude-code"
+  claude_code:
+    command: claude
+    use_structured_output: true
+    use_session_resume: true
+    use_from_pr: false
   hooks:
-    enabled: false
+    enabled: true
+    run_tests_on_stop: true
+    block_destructive: true
+    lint_on_save: false
+  heartbeat_timeout: 15m
   model_routing:
     enabled: true
     trivial: "claude-haiku-4-5-20251001"
