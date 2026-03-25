@@ -229,21 +229,25 @@ memory:
         # Base setup: renders install-pilot-agent.sh.j2, uploads, executes
         await super().setup(environment)
 
-        # Upload pre-built pilot binary (now with anthropic-api backend)
-        binary_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
-        if binary_path.exists():
+        # Upload pre-built pilot binary (compressed to speed up Modal upload)
+        gz_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64.gz"
+        raw_path = Path(__file__).parent.parent / "bin" / "pilot-linux-amd64"
+        if gz_path.exists():
             await environment.upload_file(
-                source_path=binary_path,
+                source_path=gz_path,
+                target_path="/tmp/pilot.gz",
+            )
+            await environment.exec(command="gunzip -f /tmp/pilot.gz && mv /tmp/pilot /usr/local/bin/pilot && chmod +x /usr/local/bin/pilot")
+            logger.info("Uploaded + decompressed pilot binary")
+        elif raw_path.exists():
+            await environment.upload_file(
+                source_path=raw_path,
                 target_path="/usr/local/bin/pilot",
             )
             await environment.exec(command="chmod +x /usr/local/bin/pilot")
-            logger.info("Uploaded pilot binary to /usr/local/bin/pilot")
+            logger.info("Uploaded pilot binary (uncompressed)")
         else:
-            logger.error(f"Pilot binary not found at {binary_path}")
-            raise FileNotFoundError(
-                f"Pilot binary not found: {binary_path}. "
-                f"Run 'make bench-binary' first."
-            )
+            raise FileNotFoundError("Pilot binary not found. Run 'make bench-binary' first.")
 
         # Write config with anthropic-api backend
         model = self._resolve_model()
