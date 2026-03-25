@@ -425,6 +425,14 @@ def api_call_with_retry(client, kwargs, max_retries=5):
         try:
             with client.messages.stream(**kwargs) as stream:
                 response = stream.get_final_message()
+
+            # Check for error in 200 OK body (overloaded_error, api_error)
+            # SDK returns 200 but response may contain error instead of content
+            if hasattr(response, 'type') and response.type == 'error':
+                raise anthropic.APIError(f"Error in response body: {response}")
+            if not hasattr(response, 'content') or not response.content:
+                raise anthropic.APIError("Empty response content")
+
             return response
         except anthropic.RateLimitError as e:
             if attempt < max_retries:
@@ -452,7 +460,7 @@ def api_call_with_retry(client, kwargs, max_retries=5):
 
 # --- Main Engine ---
 def run(task: str, project: str, model: str, api_key: str) -> bool:
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, max_retries=0)  # handle retries ourselves
     loop_detector = LoopDetector()
     start_time = time.time()
 
