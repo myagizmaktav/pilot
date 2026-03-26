@@ -55,7 +55,8 @@ Switch to direct API anytime: change `type: "anthropic-api"` + add `ANTHROPIC_AP
 | v24 (CC, k=1) | CC 2.1.74 | 65.9% | CC sub |
 | v32 (CC, k=5) | CC 2.1.74 | 49.2% @58 | CC sub |
 | engine-v9 | Python direct | 83.3% @12 | $57 API |
-| **v33 (CC optimized)** | **CC 2.1.74** | **Running...** | **CC sub ($0)** |
+| v33 (CC optimized) | CC 2.1.74 | 100% @3 (validation) | CC sub ($0) |
+| **v35 (CC stripped)** | **CC 2.1.74** | **83.1% first pass (74/89)** | **CC sub ($0)** |
 
 ## Resume
 

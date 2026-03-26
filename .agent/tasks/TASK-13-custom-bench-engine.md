@@ -83,7 +83,10 @@ Harbor Orchestrator
 
 ### Phase 6: Full Run 🚧
 - [x] v34 validation: 3/3 passed (CC optimized)
-- [x] v35-k5 running: 81.1% at 74/445 (stripped binary + n=3)
+- [x] v35-k5 first pass: **83.1% (74/89)** — above ForgeCode #1 (81.8%)
+- [x] Zero errors through 89 trials
+- [x] dna-assembly passed (17% historical → now passing)
+- [ ] v35-k5 k=5 repeats in progress (89/445 done, ~356 remaining)
 - [ ] When credits available: switch to anthropic-api backend
 - [ ] Leaderboard submission
 

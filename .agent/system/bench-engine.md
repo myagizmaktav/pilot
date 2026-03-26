@@ -274,9 +274,10 @@ print(f\"Score: {s['metrics'][0]['mean']:.1%}\")
 |---------|------|--------|-------|-------|
 | v1 (CC) | 2026-03-08 | Claude Code | 55.6% @18 | First bench run |
 | v24 (CC) | 2026-03-22 | Claude Code | 65.9% k=1 | Best CC, Haiku classifier |
-| v32 (CC) | 2026-03-25 | Claude Code | 49.2% @58 k=5 | Best CC k=5, all improvements |
+| v32 (CC) | 2026-03-25 | Claude Code | 49.2% @58 k=5 | CC k=5, all improvements |
 | engine-v9 | 2026-03-25 | Python engine | 83.3% @12 | All-Opus, credits exhausted ($57) |
 | api-v13 | 2026-03-25 | Go backend | 0% | OAuth rejected, needs API credits |
+| **v35** | **2026-03-26** | **CC optimized** | **83.1% first pass** | **Stripped binary, n=3, routing, resume. k=5 running.** |
 
 ## Known Issues
 
