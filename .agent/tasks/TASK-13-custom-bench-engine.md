@@ -81,11 +81,21 @@ Harbor Orchestrator
 - [x] Applied engine learnings: model routing, session resume, 15m heartbeat
 - [x] v33 validation running — 1/3 passed (chess-best-move) so far
 
-### Phase 6: Full Run
-- [ ] v33 validation passes 3/3
-- [ ] k=5 run (445 trials) with CC backend
+### Phase 6: Full Run 🚧
+- [x] v34 validation: 3/3 passed (CC optimized)
+- [x] v35-k5 running: 81.1% at 74/445 (stripped binary + n=3)
 - [ ] When credits available: switch to anthropic-api backend
 - [ ] Leaderboard submission
+
+### Phase 7: Self-Improvement Wiring (Hyperagents-Inspired)
+- [x] ROAD-01: Anti-pattern injection — confirmed fixed (tests pass)
+- [x] ROAD-02: Patterns injected into self-review prompt
+- [ ] ROAD-10: Activate knowledge graph queries
+- [ ] Quality gate feedback → retry prompt
+- [ ] Outcome → complexity re-classification
+- [ ] Bench DB → main DB sync
+- [ ] Prompt variant archive (Hyperagents-style)
+- [ ] Meta-improvement: auto-prompt optimization
 
 ---
 
