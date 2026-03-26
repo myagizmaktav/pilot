@@ -475,6 +475,25 @@ func (r *Runner) buildSelfReviewPrompt(task *Task) string {
 		sb.WriteString("\nIf any criterion is UNMET, fix the implementation before proceeding.\n\n")
 	}
 
+	// Inject learned patterns for validation (ROAD-02: self-review pattern check)
+	if r.patternContext != nil {
+		patternBlock, err := r.patternContext.GetPatternsForTask(
+			context.Background(), task.ProjectPath, inferTaskType(task), task.Description)
+		if err != nil {
+			slog.Debug("Failed to get patterns for self-review", slog.Any("error", err))
+		} else if patternBlock != "" {
+			nextCheck := 9
+			if len(task.AcceptanceCriteria) > 0 {
+				nextCheck = 10
+			}
+			sb.WriteString(fmt.Sprintf("### %d. Learned Pattern Validation\n", nextCheck))
+			sb.WriteString("Check your changes against these learned patterns from previous executions:\n\n")
+			sb.WriteString(patternBlock)
+			sb.WriteString("\nFor each anti-pattern listed above, verify your code does NOT violate it.\n")
+			sb.WriteString("If you find a violation: FIX it and output `PATTERN_VIOLATION_FIXED: <pattern> — <fix>`\n\n")
+		}
+	}
+
 	sb.WriteString("### Actions\n")
 	sb.WriteString("- If you find issues: FIX them and commit the fix\n")
 	sb.WriteString("- Output `REVIEW_FIXED: <description>` if you fixed something\n")
