@@ -50,24 +50,32 @@ class PilotAgent(BaseInstalledAgent):
         # Escape instruction for shell (single quotes with escaping)
         safe_instruction = instruction.replace("'", "'\\''")
 
-        return [ExecInput(
-            command=(
-                f"pilot task '{safe_instruction}' "
-                f"--local "
-                f"--project /app "
-                f"--verbose "
-                f"--result-json {RESULT_JSON}"
+        return [
+            ExecInput(
+                command=(
+                    f"pilot task '{safe_instruction}' "
+                    f"--local "
+                    f"--project /app "
+                    f"--verbose "
+                    f"--result-json {RESULT_JSON}"
+                ),
+                cwd="/app",
+                env={
+                    **env,
+                    "IS_SANDBOX": "1",
+                    # CC uses OAuth token internally for API calls
+                    # 54K output tokens — default 32K kills complex tasks mid-thinking
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
+                },
+                timeout_sec=MAIN_TIMEOUT,
             ),
-            cwd="/app",
-            env={
-                **env,
-                "IS_SANDBOX": "1",
-                # CC uses OAuth token internally for API calls
-                # 54K output tokens — default 32K kills complex tasks mid-thinking
-                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
-            },
-            timeout_sec=MAIN_TIMEOUT,
-        )]
+            # Copy learned patterns DB to logs dir (auto-synced to host by Harbor)
+            ExecInput(
+                command="cp /root/.pilot/data/pilot.db /logs/agent/pilot-patterns.db 2>/dev/null || true",
+                cwd="/app",
+                timeout_sec=10,
+            ),
+        ]
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Read Pilot's result JSON for token metrics."""
@@ -97,6 +105,9 @@ class PilotAgent(BaseInstalledAgent):
 
         # Fallback: parse Claude Code stream-json from stdout
         self._parse_claude_output(context)
+
+        # Merge learned patterns from container back into seed DB
+        self._collect_learned_patterns()
 
     def _parse_claude_output(self, context: AgentContext) -> None:
         """Fallback: parse Claude Code JSONL output for token metrics."""
@@ -134,6 +145,94 @@ class PilotAgent(BaseInstalledAgent):
                 context.n_output_tokens = total_output
                 if total_cost > 0:
                     context.cost_usd = total_cost
+
+    def _collect_learned_patterns(self) -> None:
+        """Merge learned patterns from container DB back into seed DB."""
+        # Find container's pattern DB in logs dir (copied by post-run command)
+        container_db = self.logs_dir / "pilot-patterns.db"
+        if not container_db.exists():
+            for cmd_dir in sorted(self.logs_dir.glob("command-*")):
+                candidate = cmd_dir / "pilot-patterns.db"
+                if candidate.exists():
+                    container_db = candidate
+                    break
+
+        if not container_db.exists():
+            return
+
+        seed_path = Path(__file__).parent / "data" / "pilot.db"
+        if not seed_path.exists():
+            return
+
+        try:
+            self._merge_patterns(container_db, seed_path)
+        except Exception as e:
+            logger.warning(f"Failed to merge patterns: {e}")
+
+    def _merge_patterns(self, source_db: Path, target_db: Path) -> None:
+        """Thread-safe merge of new patterns from source into target DB.
+
+        - Dedup by title (don't insert duplicates)
+        - New patterns inserted with confidence 0.6
+        - Existing patterns get confidence boost (+0.05, cap 0.95)
+        """
+        import fcntl
+        import sqlite3
+
+        lock_path = target_db.with_suffix(".merge-lock")
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                src = sqlite3.connect(str(source_db))
+                dst = sqlite3.connect(str(target_db))
+
+                # Get existing titles in target
+                existing = {}
+                for row in dst.execute("SELECT id, title, confidence FROM cross_patterns"):
+                    existing[row[1]] = (row[0], row[2])
+
+                # Get all patterns from source
+                src_patterns = src.execute(
+                    "SELECT title, pattern_type, description, context, confidence, "
+                    "occurrences, is_anti_pattern, scope FROM cross_patterns"
+                ).fetchall()
+
+                merged = 0
+                boosted = 0
+                for title, ptype, desc, ctx, conf, occ, is_anti, scope in src_patterns:
+                    if title in existing:
+                        # Boost confidence on existing pattern
+                        old_id, old_conf = existing[title]
+                        new_conf = min(0.95, old_conf + 0.05)
+                        if new_conf > old_conf:
+                            dst.execute(
+                                "UPDATE cross_patterns SET confidence = ?, occurrences = occurrences + 1 WHERE id = ?",
+                                (new_conf, old_id),
+                            )
+                            boosted += 1
+                    else:
+                        # Insert new pattern with conservative confidence
+                        import uuid
+                        pattern_id = f"learned-{uuid.uuid4().hex[:12]}"
+                        dst.execute(
+                            "INSERT INTO cross_patterns "
+                            "(id, pattern_type, title, description, context, examples, "
+                            "confidence, occurrences, is_anti_pattern, scope) "
+                            "VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)",
+                            (pattern_id, ptype, title, desc, ctx or "",
+                             min(conf, 0.6), occ, is_anti, scope or "global"),
+                        )
+                        merged += 1
+
+                dst.commit()
+                src.close()
+                dst.close()
+
+                if merged > 0 or boosted > 0:
+                    logger.info(f"Pattern merge: {merged} new, {boosted} boosted")
+
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
     def _build_env(self) -> dict[str, str]:
         """Collect auth environment variables."""
