@@ -305,6 +305,94 @@ def run_task(instruction: str, project_path: str, oauth_token: str):
 - Fargate Spot: ~$4.50
 - EC2 Warm Pool: ~$9 (+ idle cost)
 
+## Technical Requirements (from Terminal Bench 2.0 task specs)
+
+### Resource Distribution (89 tasks analyzed)
+
+| Resource | Distribution | Notes |
+|----------|-------------|-------|
+| **CPU** | 82 tasks: 1 vCPU, 3 tasks: 2 vCPU, 2 tasks: 4 vCPU | 92% need just 1 core |
+| **Memory** | 70 tasks: 2GB, 15 tasks: 4GB, 2 tasks: 8GB | 79% fit in 2GB |
+| **Storage** | 87 tasks: 10GB | Universal |
+| **GPU** | 0 tasks require GPU | None — all CPU-only |
+| **Timeout** | min: 600s, median: 900s, max: 12000s | 15 min to 3.3 hours |
+
+### High-Resource Tasks (17 of 89)
+
+| Task | CPU | Memory | Why |
+|------|-----|--------|-----|
+| mcmc-sampling-stan | 4 | 8GB | MCMC sampling, parallel chains |
+| rstan-to-pystan | 4 | 8GB | Statistical model compilation |
+| compile-compcert | 2 | 4GB | CompCert C compiler build |
+| install-windows-3.11 | 2 | 4GB | QEMU VM |
+| overfull-hbox | 2 | 4GB | LaTeX compilation |
+| gpt2-codegolf | 1 | 4GB | Model inference in minimal C |
+| sam-cell-seg | 1 | 4GB | SAM model inference |
+| torch-*-parallelism | 1 | 4GB | PyTorch distributed |
+| train-fasttext | 1 | 4GB | FastText training |
+
+### Fargate Task Size Tiers
+
+```yaml
+# Tier 1: Standard (72 tasks, 81%)
+StandardTask:
+  Cpu: '1024'      # 1 vCPU
+  Memory: '2048'   # 2 GB
+  # Cost: ~$0.02/task (30 min Spot)
+
+# Tier 2: Medium (15 tasks, 17%)
+MediumTask:
+  Cpu: '2048'      # 2 vCPU
+  Memory: '4096'   # 4 GB
+  # Cost: ~$0.04/task (30 min Spot)
+
+# Tier 3: Heavy (2 tasks, 2%)
+HeavyTask:
+  Cpu: '4096'      # 4 vCPU
+  Memory: '8192'   # 8 GB
+  # Cost: ~$0.08/task (30 min Spot)
+```
+
+### Recommended Default Configuration
+
+For production Pilot (non-bench):
+
+```yaml
+# Default container spec — handles 95% of tasks
+PilotTaskDef:
+  Cpu: '2048'       # 2 vCPU (headroom for CC + agent overhead)
+  Memory: '4096'    # 4 GB (covers 98% of tasks)
+  Storage: '20'     # 20 GB ephemeral (10GB task + room for deps)
+  Timeout: 3600     # 1 hour default (configurable per task)
+```
+
+**Why 2 vCPU / 4GB default:** CC itself consumes ~300MB (Node.js) + pilot binary ~20MB. With 2GB containers, agent overhead leaves little for the actual task. 4GB gives comfortable headroom.
+
+### Network Requirements
+
+| Endpoint | Port | Required For |
+|----------|------|-------------|
+| api.anthropic.com | 443 | Claude API calls (CC or direct) |
+| registry.npmjs.org | 443 | CC install (if not pre-baked) |
+| pypi.org | 443 | pip install during tasks |
+| github.com | 443 | git clone, task repos |
+| S3 (same region) | 443 | Pattern DB sync, artifacts |
+
+**No inbound ports needed** — agent is outbound-only.
+
+### Estimated AWS Costs (445 bench trials)
+
+| Config | Per Trial | Total | vs Modal |
+|--------|-----------|-------|----------|
+| Fargate Standard (1vCPU/2GB) | $0.02 | $8.90 | 60% cheaper |
+| Fargate Spot (1vCPU/2GB) | $0.006 | $2.67 | 88% cheaper |
+| Fargate Mixed (tiered) | $0.025 | $11.12 | 50% cheaper |
+| EC2 Warm Pool (t3.medium) | $0.015 | $6.68 | 70% cheaper |
+
+**Production cost estimate** (100 tasks/day, mixed complexity):
+- Fargate Spot: ~$0.60/day = **$18/month**
+- EC2 Warm Pool: ~$1.50/day = **$45/month** (includes idle cost)
+
 ## Migration Path
 
 1. Build Dockerfile, push to ECR
