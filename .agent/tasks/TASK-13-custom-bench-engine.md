@@ -1,6 +1,6 @@
 # TASK-13: Custom Anthropic API Engine for Terminal Bench 2.0
 
-**Status**: 🚧 In Progress
+**Status**: ✅ Submitted to Leaderboard
 **Created**: 2026-03-25
 **Branch**: `feat/pilot-bench-real`
 
@@ -81,14 +81,14 @@ Harbor Orchestrator
 - [x] Applied engine learnings: model routing, session resume, 15m heartbeat
 - [x] v33 validation running — 1/3 passed (chess-best-move) so far
 
-### Phase 6: Full Run 🚧
+### Phase 6: Full Run ✅
 - [x] v34 validation: 3/3 passed (CC optimized)
 - [x] v35-k5 first pass: **83.1% (74/89)** — above ForgeCode #1 (81.8%)
-- [x] Zero errors through 89 trials
+- [x] v35-k5 final: **82.0% (365 pass, 74 fail, 6 errors, 439/445 trials)**
 - [x] dna-assembly passed (17% historical → now passing)
-- [ ] v35-k5 k=5 repeats in progress (89/445 done, ~356 remaining)
-- [ ] When credits available: switch to anthropic-api backend
-- [ ] Leaderboard submission
+- [x] Leaderboard submission: PR #108, bot validated, ready to merge
+- [x] HF link: https://huggingface.co/datasets/harborframework/terminal-bench-2-leaderboard/discussions/108
+- [ ] When credits available: switch to anthropic-api backend → target 90%+
 
 ### Phase 7: Self-Improvement Wiring (Hyperagents-Inspired)
 - [x] ROAD-01: Anti-pattern injection — confirmed fixed (tests pass)

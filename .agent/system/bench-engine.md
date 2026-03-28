@@ -297,7 +297,7 @@ print(f\"Score: {s['metrics'][0]['mean']:.1%}\")
 | v32 (CC) | 2026-03-25 | Claude Code | 49.2% @58 k=5 | CC k=5, all improvements |
 | engine-v9 | 2026-03-25 | Python engine | 83.3% @12 | All-Opus, credits exhausted ($57) |
 | api-v13 | 2026-03-25 | Go backend | 0% | OAuth rejected, needs API credits |
-| **v35** | **2026-03-26** | **CC optimized** | **83.1% 1st pass, 81.3% @327 k=5** | **Stripped binary, n=3, routing, resume. Pattern persistence added.** |
+| **v35** | **2026-03-26** | **CC optimized** | **82.0% final (445 trials, validated)** | **Stripped binary, n=3, routing, resume. SUBMITTED to leaderboard.** |
 
 ## Known Issues
 
