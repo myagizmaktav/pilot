@@ -182,7 +182,7 @@ When estimated context > 150K tokens:
 
 ## Learning DB Integration
 
-17 patterns loaded from `/root/.pilot/data/pilot.db`:
+17 seed patterns loaded from `/root/.pilot/data/pilot.db`:
 - 11 recommended (test-first, brute-force, approach switching, task-specific strategies)
 - 6 anti-patterns (analysis paralysis, format mismatch, concurrent processes, retrying)
 
@@ -190,6 +190,26 @@ Go backend: injected via `PatternContext.InjectPatterns()` in `BuildPrompt()`.
 Python engine: direct SQLite query in `load_patterns()`.
 
 Managed by `pilot-bench/pilot_agent/scripts/seed-learning-db.py`.
+
+### Pattern Persistence Across Containers
+
+Containers learn during execution. Patterns persist via batch sync:
+
+```
+Container finishes task
+  → cp /root/.pilot/data/pilot.db /logs/agent/pilot-patterns.db
+  → Harbor auto-syncs /logs/agent/ to host (bind mount)
+  → populate_context_post_run() merges new patterns into seed DB
+  → next container uploads enriched seed DB
+```
+
+Merge rules (thread-safe with fcntl file lock for n=3):
+- Dedup by title — no duplicate patterns
+- New patterns inserted at confidence 0.6 (conservative)
+- Existing patterns boosted +0.05 per occurrence (cap 0.95)
+- Each wave of containers benefits from previous wave's learnings
+
+With n=3, containers in the same wave can't share (they diverge). But each wave enriches the seed for the next wave. Batch learning, not real-time.
 
 ## Auth
 
@@ -277,7 +297,7 @@ print(f\"Score: {s['metrics'][0]['mean']:.1%}\")
 | v32 (CC) | 2026-03-25 | Claude Code | 49.2% @58 k=5 | CC k=5, all improvements |
 | engine-v9 | 2026-03-25 | Python engine | 83.3% @12 | All-Opus, credits exhausted ($57) |
 | api-v13 | 2026-03-25 | Go backend | 0% | OAuth rejected, needs API credits |
-| **v35** | **2026-03-26** | **CC optimized** | **83.1% first pass** | **Stripped binary, n=3, routing, resume. k=5 running.** |
+| **v35** | **2026-03-26** | **CC optimized** | **83.1% 1st pass, 81.3% @327 k=5** | **Stripped binary, n=3, routing, resume. Pattern persistence added.** |
 
 ## Known Issues
 

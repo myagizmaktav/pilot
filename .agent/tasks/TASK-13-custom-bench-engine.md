@@ -93,6 +93,7 @@ Harbor Orchestrator
 ### Phase 7: Self-Improvement Wiring (Hyperagents-Inspired)
 - [x] ROAD-01: Anti-pattern injection — confirmed fixed (tests pass)
 - [x] ROAD-02: Patterns injected into self-review prompt
+- [x] Pattern DB persistence — containers learn and merge back to seed
 - [ ] ROAD-10: Activate knowledge graph queries
 - [ ] Quality gate feedback → retry prompt
 - [ ] Outcome → complexity re-classification
