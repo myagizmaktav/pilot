@@ -279,9 +279,9 @@ pilot start --env=prod --telegram --github   # Safe, manual approval
 | Jira Webhooks | Needs gateway running |
 | Email Alerts | Implemented, untested |
 | PagerDuty | Implemented, untested |
-| Discord Intent Classification | [GH-2121](https://github.com/alekspetrov/pilot/issues/2121) — all messages treated as tasks, needs Haiku classifier |
-| Slack Regex Fallback | [GH-2122](https://github.com/alekspetrov/pilot/issues/2122) — falls back to unreliable regex on LLM timeout |
-| Dead Regex Classifier | [GH-2123](https://github.com/alekspetrov/pilot/issues/2123) — remove `DetectIntent()` after 2121+2122 |
+| Discord Intent Classification | [GH-2121](https://github.com/qf-studio/pilot/issues/2121) — all messages treated as tasks, needs Haiku classifier |
+| Slack Regex Fallback | [GH-2122](https://github.com/qf-studio/pilot/issues/2122) — falls back to unreliable regex on LLM timeout |
+| Dead Regex Classifier | [GH-2123](https://github.com/qf-studio/pilot/issues/2123) — remove `DetectIntent()` after 2121+2122 |
 
 ---
 
@@ -690,7 +690,7 @@ pilot upgrade
 
 **Fresh Install:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alekspetrov/pilot/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/qf-studio/pilot/main/install.sh | bash
 ```
 
 **Known Issue (GH-204):** Install script doesn't auto-configure PATH. Users must add `~/.local/bin` to PATH or open new terminal.

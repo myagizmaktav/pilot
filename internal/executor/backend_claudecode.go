@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alekspetrov/pilot/internal/logging"
+	"github.com/qf-studio/pilot/internal/logging"
 )
 
 // GracePeriod is the time to wait after context cancellation before hard killing the process.

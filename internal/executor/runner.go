@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alekspetrov/pilot/internal/logging"
-	"github.com/alekspetrov/pilot/internal/memory"
-	"github.com/alekspetrov/pilot/internal/quality"
-	"github.com/alekspetrov/pilot/internal/replay"
-	"github.com/alekspetrov/pilot/internal/webhooks"
+	"github.com/qf-studio/pilot/internal/logging"
+	"github.com/qf-studio/pilot/internal/memory"
+	"github.com/qf-studio/pilot/internal/quality"
+	"github.com/qf-studio/pilot/internal/replay"
+	"github.com/qf-studio/pilot/internal/webhooks"
 )
 
 // StreamEvent represents a Claude Code stream-json event

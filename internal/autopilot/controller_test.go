@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alekspetrov/pilot/internal/adapters/github"
-	"github.com/alekspetrov/pilot/internal/approval"
-	"github.com/alekspetrov/pilot/internal/memory"
-	"github.com/alekspetrov/pilot/internal/testutil"
+	"github.com/qf-studio/pilot/internal/adapters/github"
+	"github.com/qf-studio/pilot/internal/approval"
+	"github.com/qf-studio/pilot/internal/memory"
+	"github.com/qf-studio/pilot/internal/testutil"
 )
 
 func TestNewController(t *testing.T) {
