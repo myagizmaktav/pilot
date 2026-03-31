@@ -24,7 +24,7 @@ SSM_COMMAND_TIMEOUT_SEC = 7200  # 2 hours — tasks take 12-90 min
 SSM_POLL_INTERVAL_SEC = 15
 
 # Terminal Bench 2.0
-TB_GIT_URL = "https://github.com/TerminalBench/terminal-bench.git"
+TB_GIT_URL = "https://github.com/laude-institute/terminal-bench-2.git"
 TB_GIT_REF = "main"  # Pin to specific commit after validation
 TB_DOCKER_TAG = "20251031"  # Default Docker image tag for tasks
 
