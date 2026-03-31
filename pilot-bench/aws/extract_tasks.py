@@ -204,10 +204,15 @@ def main():
         sys.exit(1)
 
     # Summary stats
-    total_mem = {2048: 0, 4096: 0, 8192: 0}
+    mem_buckets = {"<=2GB": 0, "4GB": 0, "8GB+": 0}
     for t in tasks:
-        bucket_key = min(total_mem.keys(), key=lambda k: abs(k - t["memory_mb"]))
-        total_mem[bucket_key] = total_mem.get(bucket_key, 0) + 1
+        mb = t["memory_mb"]
+        if mb <= 2048:
+            mem_buckets["<=2GB"] += 1
+        elif mb <= 4096:
+            mem_buckets["4GB"] += 1
+        else:
+            mem_buckets["8GB+"] += 1
 
     manifest = {
         "version": "2.0",
@@ -221,7 +226,7 @@ def main():
     output_path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"\nManifest written to {output_path}")
     print(f"  Tasks: {len(tasks)}")
-    print(f"  Memory distribution: {dict(total_mem)}")
+    print(f"  Memory distribution: {mem_buckets}")
 
     if args.upload:
         upload_to_s3(output_path)

@@ -16,8 +16,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
-import subprocess
 import sys
 import time
 from collections import deque
@@ -32,6 +30,7 @@ from config import (
     DEFAULT_MAX_PARALLEL,
     DEFAULT_MODEL,
     PILOT_BINARY_S3_KEY,
+    PILOT_CONFIG_S3_KEY,
     PILOT_DB_S3_KEY,
     S3_BUCKET,
     S3_RUNS_PREFIX,
@@ -269,6 +268,11 @@ class AWSBenchOrchestrator:
                 "Skipping binary upload — instance must have pilot pre-installed."
             )
 
+        # Generate pilot config for this model and upload
+        config_path = self.results_dir / "pilot-config.yaml"
+        config_path.write_text(self._generate_pilot_config())
+        assets[PILOT_CONFIG_S3_KEY] = str(config_path)
+
         # Learning DB
         db_path = bench_dir / "pilot_agent" / "data" / "pilot.db"
         if db_path.exists():
@@ -295,6 +299,82 @@ class AWSBenchOrchestrator:
         if path.exists():
             return str(path)
         return None
+
+    def _generate_pilot_config(self) -> str:
+        """Generate pilot config.yaml — mirrors agent.py:_build_config()."""
+        m = self.model
+        return f"""version: "1.0"
+orchestrator:
+  model: "{m}"
+executor:
+  type: "claude-code"
+  claude_code:
+    command: claude
+    use_structured_output: true
+    use_session_resume: true
+    use_from_pr: false
+  hooks:
+    enabled: true
+    run_tests_on_stop: true
+    block_destructive: true
+    lint_on_save: false
+  heartbeat_timeout: 15m
+  model_routing:
+    enabled: true
+    trivial: "claude-haiku-4-5-20251001"
+    simple: "claude-sonnet-4-6"
+    medium: "{m}"
+    complex: "{m}"
+  timeout:
+    default: 30m
+    trivial: 15m
+    simple: 25m
+    medium: 30m
+    complex: 60m
+  effort_routing:
+    enabled: true
+    trivial: low
+    simple: medium
+    medium: high
+    complex: high
+  effort_classifier:
+    enabled: true
+    model: claude-haiku-4-5-20251001
+    timeout: 30s
+  intent_judge:
+    enabled: false
+  retry:
+    enabled: true
+    rate_limit:
+      max_attempts: 3
+      initial_backoff: 30s
+      backoff_multiplier: 2
+    api_error:
+      max_attempts: 3
+      initial_backoff: 5s
+      backoff_multiplier: 2
+    timeout:
+      max_attempts: 2
+      initial_backoff: 0s
+      backoff_multiplier: 0
+      extend_timeout: true
+      timeout_multiplier: 1.5
+quality:
+  enabled: true
+  gates:
+    - name: test
+      type: test
+      command: "if [ -f /tests/test_outputs.py ]; then cd /app && /usr/local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1 || /root/.local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1; fi"
+      required: true
+      timeout: 5m
+      max_retries: 2
+      retry_delay: 5s
+      failure_hint: "Tests failed. Read /tests/test_outputs.py to understand what is expected, then fix your implementation."
+memory:
+  path: /root/.pilot/data
+  learning:
+    enabled: true
+"""
 
     def _dispatch_batch(self, work_queue: deque[tuple[str, str]]) -> int:
         """Dispatch tasks to idle instances. Returns number dispatched."""
