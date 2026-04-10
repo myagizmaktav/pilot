@@ -61,11 +61,23 @@ if ! python3 -c "import boto3" 2>/dev/null; then
     exit 1
 fi
 
-# Generate task manifest if missing
+# Always regenerate task manifest (stale files cause wrong task count)
 MANIFEST="tasks-manifest.json"
-if [ ! -f "$MANIFEST" ]; then
-    echo "Generating task manifest..."
-    python3 extract_tasks.py --output "$MANIFEST"
+echo "Generating task manifest..."
+python3 extract_tasks.py --output "$MANIFEST"
+
+# Validate task count
+TASK_COUNT=$(python3 -c "
+import json
+data = json.load(open('$MANIFEST'))
+tasks = data.get('tasks', data) if isinstance(data, dict) else data
+print(len(tasks))
+" 2>/dev/null || echo 0)
+echo "Manifest: $TASK_COUNT tasks"
+if [ "$TASKS" = "all" ] && [ "$TASK_COUNT" -lt 50 ]; then
+    echo "ERROR: Manifest has only $TASK_COUNT tasks (expected ~89 for TB 2.0). Aborting."
+    echo "Check that terminal-bench repo is cloned and extract_tasks.py can find tasks."
+    exit 1
 fi
 
 if [ "$EXTRACT_ONLY" = true ]; then

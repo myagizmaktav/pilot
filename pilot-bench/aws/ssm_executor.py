@@ -107,7 +107,8 @@ class SSMExecutor:
                 "status_details": result.get("StatusDetails", ""),
             }
         except self.ssm.exceptions.InvocationDoesNotExist:
-            return {"status": "Pending", "stdout": "", "stderr": ""}
+            logger.warning(f"InvocationDoesNotExist for {command_id} on {instance_id} — instance likely terminated")
+            return {"status": "Failed", "stdout": "", "stderr": "InvocationDoesNotExist — instance likely terminated"}
         except Exception as e:
             logger.warning(f"Error checking command {command_id}: {e}")
             return {"status": "Error", "stdout": "", "stderr": str(e)}
@@ -124,7 +125,7 @@ class SSMExecutor:
             result = self.check_command(command_id)
             status = result["status"]
 
-            if status in ("Success", "Failed", "TimedOut", "Cancelled"):
+            if status in ("Success", "Failed", "TimedOut", "Cancelled", "Error"):
                 if command_id in self._active_commands:
                     meta = self._active_commands.pop(command_id)
                     result["task_name"] = meta["task_name"]
@@ -134,6 +135,7 @@ class SSMExecutor:
 
             time.sleep(poll_interval)
 
+        self._active_commands.pop(command_id, None)
         return {"status": "TimedOut", "stdout": "", "stderr": "Local timeout reached"}
 
     def poll_all_active(self) -> list[dict]:
@@ -148,7 +150,7 @@ class SSMExecutor:
             result = self.check_command(command_id)
             status = result["status"]
 
-            if status in ("Success", "Failed", "TimedOut", "Cancelled"):
+            if status in ("Success", "Failed", "TimedOut", "Cancelled", "Error"):
                 result["command_id"] = command_id
                 result["task_name"] = meta["task_name"]
                 result["trial_id"] = meta["trial_id"]

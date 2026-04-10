@@ -122,7 +122,7 @@ quality:
   gates:
     - name: test
       type: test
-      command: "if [ -f /tests/test_outputs.py ]; then cd /app && /usr/local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1 || /root/.local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1; fi"
+      command: "export PATH=/root/.local/bin:/usr/local/bin:$PATH; if [ -f /tests/test_outputs.py ]; then cd /app && uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1; fi"
       required: true
       timeout: 5m
       max_retries: 2
@@ -293,27 +293,85 @@ docker exec "$CONTAINER_NAME" bash -c '
     # Node.js (required by Claude Code)
     if ! command -v node &>/dev/null; then
         echo "  Installing Node.js..."
-        curl -fsSL https://deb.nodesource.com/setup_22.x 2>/dev/null | bash - 2>/dev/null
-        apt-get install -y nodejs 2>/dev/null || apk add --no-cache nodejs npm 2>/dev/null || true
+        if command -v apt-get &>/dev/null; then
+            curl -fsSL https://deb.nodesource.com/setup_22.x 2>&1 | bash - 2>&1
+            apt-get install -y nodejs 2>&1
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache nodejs npm 2>&1
+        else
+            echo "  ERROR: No supported package manager (apt-get/apk)"
+        fi
     fi
+    echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
 
     # Claude Code
     if ! command -v claude &>/dev/null; then
         echo "  Installing Claude Code..."
-        npm install -g @anthropic-ai/claude-code 2>/dev/null || true
+        npm install -g @anthropic-ai/claude-code 2>&1
     fi
+    echo "  Claude: $(claude --version 2>/dev/null || echo MISSING)"
 
     # uv/uvx (verifiers need it)
     if ! command -v uv &>/dev/null; then
         echo "  Installing uv..."
-        curl -LsSf https://astral.sh/uv/install.sh 2>/dev/null | sh 2>/dev/null || true
+        curl -LsSf https://astral.sh/uv/install.sh 2>&1 | sh 2>&1
     fi
 
-    echo "  Node: $(node --version 2>/dev/null || echo missing)"
-    echo "  Claude: $(claude --version 2>/dev/null || echo missing)"
-    echo "  uv: $(/root/.local/bin/uv --version 2>/dev/null || uv --version 2>/dev/null || echo missing)"
+    # Persist PATH for all subsequent docker exec calls
+    export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+    echo "export PATH=\"/root/.local/bin:/usr/local/bin:\$PATH\"" >> /root/.bashrc
+    echo "PATH=/root/.local/bin:/usr/local/bin:$PATH" >> /etc/environment
+
+    echo "  uv: $(uv --version 2>/dev/null || echo MISSING)"
+    echo "  uvx: $(uvx --version 2>/dev/null || echo MISSING)"
     echo "  pilot: $(pilot version 2>/dev/null || echo installed)"
 '
+
+# ─── Step 6b: Validate critical dependencies ─────────────────────────────────
+echo ""
+echo "--- Validating dependencies ---"
+
+DEP_CHECK=$(docker exec -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$CONTAINER_NAME" bash -c '
+    MISSING=""
+    command -v node    >/dev/null 2>&1 || MISSING="$MISSING node"
+    command -v claude  >/dev/null 2>&1 || MISSING="$MISSING claude"
+    command -v uvx     >/dev/null 2>&1 || MISSING="$MISSING uvx"
+    command -v pilot   >/dev/null 2>&1 || MISSING="$MISSING pilot"
+    if [ -n "$MISSING" ]; then
+        echo "FATAL: Missing dependencies:$MISSING"
+        exit 1
+    fi
+    echo "OK: node=$(node -v) claude=$(claude --version 2>&1 | head -1) uvx=$(uvx --version) pilot=$(pilot version 2>/dev/null || echo ok)"
+' 2>&1) || {
+    echo "ERROR: Container dependency check failed:"
+    echo "$DEP_CHECK"
+    echo ""
+    echo "Aborting trial — writing failure result"
+    mkdir -p "${RESULTS_DIR}"
+    echo "0.0" > "${RESULTS_DIR}/reward.txt"
+    echo "Dependency install failed: $DEP_CHECK" > "${RESULTS_DIR}/verifier-output.txt"
+    cat > "${RESULTS_DIR}/trial-meta.json" << METAEOF
+{
+    "task_name": "${TASK_NAME}",
+    "trial_id": "${TRIAL_ID}",
+    "run_id": "${RUN_ID}",
+    "model": "${MODEL}",
+    "docker_image": "${DOCKER_IMAGE}",
+    "reward": 0.0,
+    "duration_sec": 0,
+    "instance_id": "$(curl -s http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo unknown)",
+    "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "completed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "error": "dependency_install_failed"
+}
+METAEOF
+    S3_DEST="s3://${S3_BUCKET}/${S3_RUNS}/${RUN_ID}/${TASK_NAME}/${TRIAL_ID}"
+    aws s3 cp --recursive "${RESULTS_DIR}/" "$S3_DEST/" --sse aws:kms --quiet
+    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    exit 1
+}
+echo "  $DEP_CHECK"
 
 # Copy test files into container
 if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
@@ -369,6 +427,7 @@ docker exec \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     -e IS_SANDBOX=1 \
     -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 \
+    -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$CONTAINER_NAME" \
     timeout "${MAIN_TIMEOUT}" \
     pilot task "$INSTRUCTION" \
