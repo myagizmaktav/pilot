@@ -294,23 +294,24 @@ docker exec "$CONTAINER_NAME" bash -c '
     set -e
     chmod +x /usr/local/bin/pilot
 
-    # git (required by pilot preflight + Claude Code)
-    if ! command -v git &>/dev/null; then
-        echo "  Installing git..."
+    # Base deps (curl, git — many containers lack both)
+    if ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
+        echo "  Installing base deps (git, curl)..."
         if command -v apt-get &>/dev/null; then
-            apt-get update -qq 2>&1 && apt-get install -y -qq git 2>&1
+            apt-get update -qq 2>&1 && apt-get install -y -qq git curl ca-certificates 2>&1
         elif command -v apk &>/dev/null; then
-            apk add --no-cache git 2>&1
+            apk add --no-cache git curl ca-certificates 2>&1
         fi
     fi
     echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
+    echo "  Curl: $(curl --version 2>/dev/null | head -1 || echo MISSING)"
 
-    # Node.js (required by Claude Code) — direct binary, no nested bash pipes
+    # Node.js (required by Claude Code) — direct binary, .tar.gz (no xz dependency)
     if ! command -v node &>/dev/null; then
         echo "  Installing Node.js via binary tarball..."
         NODE_VERSION=22.14.0
-        curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
-            | tar -xJ -C /usr/local --strip-components=1 2>&1
+        curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
+            | tar -xz -C /usr/local --strip-components=1 2>&1
         hash -r
     fi
     echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
