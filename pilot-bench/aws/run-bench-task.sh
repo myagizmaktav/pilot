@@ -417,6 +417,16 @@ docker exec -w / "$CONTAINER_NAME" bash -c '
 '
 echo "  Bootstrap written to /app/.pilot-env-context.txt"
 
+# Remove oracle test files from /app BEFORE agent runs (Harbor compliance).
+# Docker images ship test_outputs.py, test.sh, etc. at /app/ — agent must not see them.
+docker exec -w / "$CONTAINER_NAME" bash -c '
+    rm -f /app/test_outputs.py /app/test.sh /app/tests/test_outputs.py /app/tests/test.sh 2>/dev/null
+    rm -rf /app/tests/ 2>/dev/null
+    # Also remove any canary-marked files the agent could read
+    grep -rl "terminal-bench-canary" /app/ 2>/dev/null | xargs rm -f 2>/dev/null || true
+'
+echo "  Oracle files removed from /app"
+
 # Initialize git repo in /app (pilot needs it)
 docker exec -w / "$CONTAINER_NAME" bash -c '
     cd /app
