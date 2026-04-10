@@ -305,17 +305,13 @@ docker exec "$CONTAINER_NAME" bash -c '
     fi
     echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
 
-    # Node.js (required by Claude Code)
+    # Node.js (required by Claude Code) — direct binary, no nested bash pipes
     if ! command -v node &>/dev/null; then
-        echo "  Installing Node.js..."
-        if command -v apt-get &>/dev/null; then
-            curl -fsSL https://deb.nodesource.com/setup_22.x 2>&1 | bash - 2>&1
-            apt-get install -y nodejs 2>&1
-        elif command -v apk &>/dev/null; then
-            apk add --no-cache nodejs npm 2>&1
-        else
-            echo "  ERROR: No supported package manager (apt-get/apk)"
-        fi
+        echo "  Installing Node.js via binary tarball..."
+        NODE_VERSION=22.14.0
+        curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+            | tar -xJ -C /usr/local --strip-components=1 2>&1
+        hash -r
     fi
     echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
 
@@ -326,10 +322,12 @@ docker exec "$CONTAINER_NAME" bash -c '
     fi
     echo "  Claude: $(claude --version 2>/dev/null || echo MISSING)"
 
-    # uv/uvx (verifiers need it)
+    # uv/uvx (verifiers need it) — download script first, then execute (avoids nested pipe issues)
     if ! command -v uv &>/dev/null; then
         echo "  Installing uv..."
-        curl -LsSf https://astral.sh/uv/install.sh 2>&1 | sh 2>&1
+        curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh 2>&1
+        sh /tmp/uv-install.sh 2>&1
+        rm -f /tmp/uv-install.sh
     fi
 
     # Persist PATH for all subsequent docker exec calls
