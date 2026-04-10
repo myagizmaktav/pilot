@@ -364,7 +364,7 @@ quality:
   gates:
     - name: test
       type: test
-      command: "if [ -f /tests/test_outputs.py ]; then cd /app && pip install -q pytest 2>/dev/null; python -m pytest /tests/test_outputs.py -rA 2>&1; fi"
+      command: "if [ -f /tests/test_outputs.py ]; then cd /app && pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null; python3 -m pytest /tests/test_outputs.py -rA 2>&1; fi"
       required: true
       timeout: 5m
       max_retries: 2
