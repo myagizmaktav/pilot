@@ -49,6 +49,18 @@ class PilotAgent(BaseInstalledAgent):
 
         # Escape instruction for shell (single quotes with escaping)
         safe_instruction = instruction.replace("'", "'\\''")
+        # Prohibit reading evaluation test files
+        safe_instruction += "\n\nIMPORTANT: Do NOT read, cat, or access any files under /tests/. These are evaluation files used after your work is complete. Solve the task based solely on this instruction."
+        safe_instruction += """
+
+VERIFICATION PROTOCOL (mandatory before finishing):
+1. Re-read the original instruction above
+2. List every testable requirement from the instruction
+3. Write a validation script (validate.sh or validate.py) that checks each requirement
+4. Run it and examine output carefully
+5. If ANY check fails, fix your implementation and re-run until all pass
+6. Only declare success after your own validation passes
+"""
 
         return [
             ExecInput(
@@ -65,7 +77,7 @@ class PilotAgent(BaseInstalledAgent):
                     "IS_SANDBOX": "1",
                     # CC uses OAuth token internally for API calls
                     # 54K output tokens — default 32K kills complex tasks mid-thinking
-                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "54000",
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000",
                 },
                 timeout_sec=MAIN_TIMEOUT,
             ),
@@ -273,14 +285,14 @@ executor:
     use_from_pr: false
   hooks:
     enabled: true
-    run_tests_on_stop: true
+    run_tests_on_stop: false
     block_destructive: true
     lint_on_save: false
   heartbeat_timeout: 15m
   model_routing:
     enabled: true
-    trivial: "claude-haiku-4-5-20251001"
-    simple: "claude-sonnet-4-6"
+    trivial: "{model}"
+    simple: "{model}"
     medium: "{model}"
     complex: "{model}"
   timeout:
@@ -291,8 +303,8 @@ executor:
     complex: 60m
   effort_routing:
     enabled: true
-    trivial: low
-    simple: medium
+    trivial: high
+    simple: high
     medium: high
     complex: high
   effort_classifier:
@@ -318,16 +330,7 @@ executor:
       extend_timeout: true
       timeout_multiplier: 1.5
 quality:
-  enabled: true
-  gates:
-    - name: test
-      type: test
-      command: "if [ -f /tests/test_outputs.py ]; then cd /app && /usr/local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1 || /root/.local/bin/uvx -p 3.13 -w pytest==8.4.1 pytest /tests/test_outputs.py -rA 2>&1; fi"
-      required: true
-      timeout: 5m
-      max_retries: 2
-      retry_delay: 5s
-      failure_hint: "Tests failed. Read /tests/test_outputs.py to understand what is expected, then fix your implementation."
+  enabled: false
 memory:
   path: /root/.pilot/data
   learning:
@@ -405,15 +408,6 @@ memory:
         logger.info("Running env bootstrap...")
         await self._run_env_bootstrap(environment)
 
-        # Upload test files
-        tests_dir = self._find_task_tests_dir()
-        if tests_dir:
-            logger.info("Uploading test files...")
-            await environment.exec(command="mkdir -p /tests")
-            for test_file in sorted(tests_dir.iterdir()):
-                if test_file.is_file():
-                    await environment.upload_file(source_path=test_file, target_path=f"/tests/{test_file.name}")
-
         logger.info("Agent setup complete")
 
     async def _run_env_bootstrap(self, environment) -> None:
@@ -424,17 +418,20 @@ memory:
         """
         cmds = [
             "echo '=== FILES ==='",
-            "ls /app/ 2>/dev/null | head -30",
-            "echo '=== TESTS ==='",
-            "head -50 /tests/test_outputs.py 2>/dev/null || echo 'NO_TEST_FILE'",
-            "echo '=== PYTHON PACKAGES ==='",
-            "python3 -c \"import torch; print('torch='+torch.__version__)\" 2>/dev/null || echo 'torch=missing'",
-            "python3 -c \"import scipy; print('scipy='+scipy.__version__)\" 2>/dev/null || echo 'scipy=missing'",
-            "python3 -c \"import pandas; print('pandas='+pandas.__version__)\" 2>/dev/null || echo 'pandas=missing'",
-            "python3 -c \"import sklearn; print('sklearn=available')\" 2>/dev/null || echo 'sklearn=missing'",
+            "find /app -maxdepth 3 -type f 2>/dev/null | head -100",
+            "echo '=== BUILD SYSTEMS ==='",
+            "ls /app/Makefile /app/pyproject.toml /app/Cargo.toml /app/package.json /app/CMakeLists.txt 2>/dev/null || echo 'none found'",
+            "echo '=== README ==='",
+            "cat /app/README* /app/INSTRUCTIONS* 2>/dev/null | head -200 || echo 'no readme'",
+            "echo '=== PYTHON ==='",
+            "python3 --version 2>/dev/null",
+            "pip list 2>/dev/null | head -30 || echo 'pip: N/A'",
             "echo '=== SYSTEM ==='",
-            "free -m 2>/dev/null | grep Mem || echo 'free: N/A'",
+            "uname -m",
             "echo \"CPUs: $(nproc 2>/dev/null || echo N/A)\"",
+            "free -m 2>/dev/null | grep Mem || echo 'free: N/A'",
+            "echo '=== DATA FILES ==='",
+            "find /app -maxdepth 2 \\( -name '*.csv' -o -name '*.json' -o -name '*.txt' -o -name '*.dat' -o -name '*.db' \\) 2>/dev/null | head -20",
         ]
         script = " ; ".join(cmds)
         try:
@@ -445,34 +442,6 @@ memory:
             logger.info("Environment bootstrap written to /app/.pilot-env-context.txt")
         except Exception as e:
             logger.warning(f"Env bootstrap failed (non-fatal): {e}")
-
-    def _find_task_tests_dir(self) -> Path | None:
-        """Find test files in harbor's task cache."""
-        try:
-            config_path = self.logs_dir.parent / "config.json"
-            if not config_path.exists():
-                config_path = self.logs_dir / "config.json"
-            if not config_path.exists():
-                return None
-
-            config = json.loads(config_path.read_text())
-            task_path = config.get("task", {}).get("path", "")
-            if not task_path:
-                return None
-
-            cache_base = Path.home() / ".cache" / "harbor" / "tasks"
-            if not cache_base.exists():
-                return None
-
-            for parent in cache_base.iterdir():
-                candidate = parent / task_path / "tests"
-                if candidate.is_dir():
-                    return candidate
-
-        except Exception as e:
-            logger.debug(f"Could not find task tests in cache: {e}")
-
-        return None
 
     def _setup_env(self) -> dict[str, str]:
         """Environment variables for install script."""
