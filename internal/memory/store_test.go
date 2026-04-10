@@ -1495,3 +1495,52 @@ func TestGetStaleQueuedExecutions(t *testing.T) {
 		t.Errorf("expected status 'queued', got %q", results[0].Status)
 	}
 }
+
+func TestHasCompletedExecution(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "pilot-test-*")
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	store, _ := NewStore(tmpDir)
+	defer func() { _ = store.Close() }()
+
+	// No executions — should return false
+	has, err := store.HasCompletedExecution("GH-42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if has {
+		t.Error("expected false for non-existent task")
+	}
+
+	// Add a failed execution — should still return false
+	_ = store.SaveExecution(&Execution{
+		ID:          "exec-failed",
+		TaskID:      "GH-42",
+		ProjectPath: "/repo",
+		Status:      "failed",
+	})
+
+	has, err = store.HasCompletedExecution("GH-42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if has {
+		t.Error("expected false for failed-only task")
+	}
+
+	// Add a completed execution — should return true
+	_ = store.SaveExecution(&Execution{
+		ID:          "exec-done",
+		TaskID:      "GH-42",
+		ProjectPath: "/repo",
+		Status:      "completed",
+	})
+
+	has, err = store.HasCompletedExecution("GH-42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
+		t.Error("expected true for completed task")
+	}
+}

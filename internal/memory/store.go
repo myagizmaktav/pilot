@@ -856,6 +856,20 @@ func (s *Store) UpdateExecutionStatus(id, status string, errorMsg ...string) err
 	})
 }
 
+// HasCompletedExecution checks whether a completed execution exists for the given task ID.
+// Used as a defense-in-depth check to prevent re-dispatch of already-completed tasks.
+func (s *Store) HasCompletedExecution(taskID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM executions
+		WHERE task_id = ? AND status = 'completed'
+	`, taskID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("HasCompletedExecution: %w", err)
+	}
+	return count > 0, nil
+}
+
 // UpdateExecutionResult updates the result fields of an execution record.
 // Called when task execution completes successfully with PR/commit info.
 func (s *Store) UpdateExecutionResult(id string, prURL, commitSHA string, durationMs int64) error {

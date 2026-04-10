@@ -2249,3 +2249,136 @@ func TestPoller_AutoRetryFailedIssue_ParallelMode_LimitReached(t *testing.T) {
 		t.Errorf("processed %d issues, want 0 (should skip at retry limit)", processedCount.Load())
 	}
 }
+
+// mockExecutionChecker implements ExecutionChecker for testing.
+type mockExecutionChecker struct {
+	completed map[string]bool
+	err       error
+}
+
+func (m *mockExecutionChecker) HasCompletedExecution(taskID string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	return m.completed[taskID], nil
+}
+
+func TestPoller_CheckForNewIssues_SkipsCompletedExecution(t *testing.T) {
+	// GH-2242: Issue has no pilot-done label but execution store shows completed.
+	// Should skip dispatch and mark processed.
+	issues := []*Issue{
+		{Number: 42, Title: "Already completed", Labels: []Label{{Name: "pilot"}}, CreatedAt: time.Now()},
+		{Number: 43, Title: "New issue", Labels: []Label{{Name: "pilot"}}, CreatedAt: time.Now()},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(issues)
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(testutil.FakeGitHubToken, server.URL)
+
+	var processedIssues []int
+	var mu sync.Mutex
+
+	checker := &mockExecutionChecker{
+		completed: map[string]bool{"GH-42": true},
+	}
+
+	poller, _ := NewPoller(client, "owner/repo", "pilot", 30*time.Second,
+		WithOnIssue(func(ctx context.Context, issue *Issue) error {
+			mu.Lock()
+			processedIssues = append(processedIssues, issue.Number)
+			mu.Unlock()
+			return nil
+		}),
+		WithExecutionChecker(checker),
+	)
+
+	poller.checkForNewIssues(context.Background())
+	poller.WaitForActive()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(processedIssues) != 1 {
+		t.Fatalf("processed %d issues, want 1", len(processedIssues))
+	}
+	if processedIssues[0] != 43 {
+		t.Errorf("processed issue %d, want 43", processedIssues[0])
+	}
+
+	// Verify issue 42 was marked as processed
+	if !poller.IsProcessed(42) {
+		t.Error("issue 42 should be marked as processed")
+	}
+}
+
+func TestPoller_FindOldestUnprocessedIssue_SkipsCompletedExecution(t *testing.T) {
+	// GH-2242: Sequential mode — issue with completed execution should be skipped.
+	issues := []*Issue{
+		{Number: 42, Title: "Already completed", Labels: []Label{{Name: "pilot"}}, CreatedAt: time.Now()},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(issues)
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(testutil.FakeGitHubToken, server.URL)
+
+	checker := &mockExecutionChecker{
+		completed: map[string]bool{"GH-42": true},
+	}
+
+	poller, _ := NewPoller(client, "owner/repo", "pilot", 30*time.Second,
+		WithExecutionChecker(checker),
+	)
+	poller.executionMode = ExecutionModeSequential
+
+	issue, err := poller.findOldestUnprocessedIssue(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if issue != nil {
+		t.Errorf("expected nil issue, got #%d", issue.Number)
+	}
+	if !poller.IsProcessed(42) {
+		t.Error("issue 42 should be marked as processed")
+	}
+}
+
+func TestPoller_CheckForNewIssues_ExecutionCheckError(t *testing.T) {
+	// GH-2242: If execution check fails, issue should still be dispatched (fail-open).
+	issues := []*Issue{
+		{Number: 42, Title: "Check fails", Labels: []Label{{Name: "pilot"}}, CreatedAt: time.Now()},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(issues)
+	}))
+	defer server.Close()
+
+	client := NewClientWithBaseURL(testutil.FakeGitHubToken, server.URL)
+
+	var processedCount atomic.Int32
+	checker := &mockExecutionChecker{err: errors.New("db error")}
+
+	poller, _ := NewPoller(client, "owner/repo", "pilot", 30*time.Second,
+		WithOnIssue(func(ctx context.Context, issue *Issue) error {
+			processedCount.Add(1)
+			return nil
+		}),
+		WithExecutionChecker(checker),
+	)
+
+	poller.checkForNewIssues(context.Background())
+	poller.WaitForActive()
+
+	if processedCount.Load() != 1 {
+		t.Errorf("processed %d issues, want 1 (should dispatch on check error)", processedCount.Load())
+	}
+}

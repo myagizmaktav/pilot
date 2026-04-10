@@ -44,6 +44,12 @@ type TaskChecker interface {
 	IsTaskQueued(taskID string) bool
 }
 
+// ExecutionChecker checks whether a completed execution exists for a task.
+// GH-2242: Defense-in-depth to prevent re-dispatch when pilot-done label is missing.
+type ExecutionChecker interface {
+	HasCompletedExecution(taskID string) (bool, error)
+}
+
 // IssueResult is returned by the issue handler with PR information
 type IssueResult struct {
 	Success    bool
@@ -99,6 +105,10 @@ type Poller struct {
 	// GH-2201: TaskChecker verifies whether an issue is still queued/in-progress
 	// before allowing retry after the grace period expires.
 	taskChecker TaskChecker
+
+	// GH-2242: ExecutionChecker prevents re-dispatch of completed tasks
+	// when pilot-done label is missing (e.g. label API error).
+	execChecker ExecutionChecker
 
 	// GH-2176: Auto-retry issues stuck with pilot-failed from execution failures.
 	// Tracks how many times each issue has been retried after pilot-failed.
@@ -183,6 +193,14 @@ func WithRetryGracePeriod(d time.Duration) PollerOption {
 func WithTaskChecker(tc TaskChecker) PollerOption {
 	return func(p *Poller) {
 		p.taskChecker = tc
+	}
+}
+
+// WithExecutionChecker sets the execution checker used to prevent re-dispatch
+// of tasks that already have a completed execution in the database.
+func WithExecutionChecker(ec ExecutionChecker) PollerOption {
+	return func(p *Poller) {
+		p.execChecker = ec
 	}
 }
 
@@ -614,6 +632,23 @@ func (p *Poller) findOldestUnprocessedIssue(ctx context.Context) (*Issue, error)
 			}
 		}
 
+		// GH-2242: Defense-in-depth — check execution store for completed tasks
+		if p.execChecker != nil {
+			taskID := fmt.Sprintf("GH-%d", issue.Number)
+			completed, checkErr := p.execChecker.HasCompletedExecution(taskID)
+			if checkErr != nil {
+				p.logger.Warn("Failed to check execution status",
+					slog.Int("number", issue.Number),
+					slog.Any("error", checkErr))
+			} else if completed {
+				p.logger.Info("Skipping re-dispatch — completed execution exists",
+					slog.Int("number", issue.Number),
+					slog.String("task_id", taskID))
+				p.markProcessed(issue.Number)
+				continue
+			}
+		}
+
 		candidates = append(candidates, issue)
 	}
 
@@ -815,6 +850,24 @@ func (p *Poller) checkForNewIssues(ctx context.Context) {
 				slog.Int("number", issue.Number),
 			)
 			continue
+		}
+
+		// GH-2242: Defense-in-depth — check execution store for completed tasks
+		// before dispatching. Prevents re-dispatch when pilot-done label failed to apply.
+		if p.execChecker != nil {
+			taskID := fmt.Sprintf("GH-%d", issue.Number)
+			completed, err := p.execChecker.HasCompletedExecution(taskID)
+			if err != nil {
+				p.logger.Warn("Failed to check execution status",
+					slog.Int("number", issue.Number),
+					slog.Any("error", err))
+			} else if completed {
+				p.logger.Info("Skipping re-dispatch — completed execution exists",
+					slog.Int("number", issue.Number),
+					slog.String("task_id", taskID))
+				p.markProcessed(issue.Number)
+				continue
+			}
 		}
 
 		candidates = append(candidates, issue)
