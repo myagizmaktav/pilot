@@ -342,7 +342,29 @@ docker exec "$CONTAINER_NAME" bash -c '
     echo "  pilot: $(pilot version 2>/dev/null || echo installed)"
 '
 
-# ─── Step 6b: Validate critical dependencies ─────────────────────────────────
+# ─── Step 6b: Configure Claude Code auth ─────────────────────────────────────
+echo ""
+echo "--- Configuring Claude Code auth ---"
+
+# Write OAuth token to a file inside the container, then configure apiKeyHelper
+# to read it. This is the headless equivalent of `claude setup-token`.
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    docker exec "$CONTAINER_NAME" mkdir -p /root/.claude
+    docker exec "$CONTAINER_NAME" bash -c "cat > /root/.claude/.auth-token << 'TOKEOF'
+${CLAUDE_CODE_OAUTH_TOKEN}
+TOKEOF"
+    docker exec "$CONTAINER_NAME" chmod 600 /root/.claude/.auth-token
+    docker exec "$CONTAINER_NAME" bash -c 'cat > /root/.claude/settings.json << '\''SETEOF'\''
+{"apiKeyHelper": "cat /root/.claude/.auth-token"}
+SETEOF'
+    echo "  Auth: OAuth token configured via apiKeyHelper"
+elif [ -n "$ANTHROPIC_API_KEY" ]; then
+    echo "  Auth: Using ANTHROPIC_API_KEY (fallback)"
+else
+    echo "  Auth: WARNING — no auth configured"
+fi
+
+# ─── Step 6c: Validate critical dependencies ─────────────────────────────────
 echo ""
 echo "--- Validating dependencies ---"
 
