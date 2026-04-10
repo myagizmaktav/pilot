@@ -250,13 +250,12 @@ docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 echo "  Pulling $DOCKER_IMAGE..."
 docker pull "$DOCKER_IMAGE" 2>&1 | tail -3
 
-# Start container with workspace mount
+# Start container (no /app volume mount — image ships task files at /app)
 echo "  Starting container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
     --cpus="$TASK_CPUS" \
     --memory="${TASK_MEMORY}m" \
-    -v "${WORKSPACE}/app:/app" \
     -v "${WORKSPACE}/logs:/logs" \
     "$DOCKER_IMAGE" \
     sleep infinity
