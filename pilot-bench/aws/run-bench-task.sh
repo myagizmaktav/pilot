@@ -345,18 +345,10 @@ docker exec -w / "$CONTAINER_NAME" bash -c '
 echo ""
 echo "--- Configuring Claude Code auth ---"
 
-# Write OAuth token to a file inside the container, then configure apiKeyHelper
-# to read it. This is the headless equivalent of `claude setup-token`.
+# Pass OAuth token via CLAUDE_CODE_OAUTH_TOKEN env var (not apiKeyHelper).
+# apiKeyHelper expects an API key, not an OAuth token — causes "Invalid API key".
 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    docker exec -w / "$CONTAINER_NAME" mkdir -p /root/.claude
-    docker exec -w / "$CONTAINER_NAME" bash -c "cat > /root/.claude/.auth-token << 'TOKEOF'
-${CLAUDE_CODE_OAUTH_TOKEN}
-TOKEOF"
-    docker exec -w / "$CONTAINER_NAME" chmod 600 /root/.claude/.auth-token
-    docker exec -w / "$CONTAINER_NAME" bash -c 'cat > /root/.claude/settings.json << '\''SETEOF'\''
-{"apiKeyHelper": "cat /root/.claude/.auth-token"}
-SETEOF'
-    echo "  Auth: OAuth token configured via apiKeyHelper"
+    echo "  Auth: OAuth token will be passed via CLAUDE_CODE_OAUTH_TOKEN env var"
 elif [ -n "$ANTHROPIC_API_KEY" ]; then
     echo "  Auth: Using ANTHROPIC_API_KEY (fallback)"
 else
@@ -465,8 +457,9 @@ TASK_START=$(date +%s)
 # Pilot's effort classifier will fall back to static mapping (acceptable).
 EXEC_ENV_ARGS=(-e IS_SANDBOX=1 -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    # OAuth via apiKeyHelper in settings.json — don't pass API key
-    echo "  Auth: OAuth (apiKeyHelper), not passing ANTHROPIC_API_KEY"
+    # Pass OAuth token as env var — the correct auth mechanism for setup-token tokens
+    EXEC_ENV_ARGS+=(-e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN")
+    echo "  Auth: CLAUDE_CODE_OAUTH_TOKEN env var"
 else
     # Fallback: bare API key
     EXEC_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
