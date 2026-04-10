@@ -123,11 +123,9 @@ quality:
     - name: test
       type: test
       command: "if [ -f /tests/test_outputs.py ]; then cd /app && export PATH=/root/.local/bin:/usr/local/bin:$PATH; pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || uvx --version >/dev/null 2>&1; python3 -m pytest /tests/test_outputs.py -rA 2>&1 || uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1; fi"
-      required: true
+      required: false
       timeout: 5m
-      max_retries: 2
-      retry_delay: 5s
-      failure_hint: "Tests failed. Read /tests/test_outputs.py to understand what is expected, then fix your implementation."
+      max_retries: 0
 memory:
   path: /root/.pilot/data
   learning:
@@ -264,6 +262,9 @@ docker run -d \
 sleep 2
 
 echo "  Container started: $(docker ps --filter name=$CONTAINER_NAME --format '{{.Status}}')"
+
+# Ensure verifier output directory exists (TB2 test.sh writes reward to /logs/verifier/reward.txt)
+docker exec -w / "$CONTAINER_NAME" mkdir -p /logs/verifier
 
 # ─── Step 6: Inject pilot + deps into container ──────────────────────────────
 echo ""
@@ -493,8 +494,13 @@ if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
     docker exec -w / "$CONTAINER_NAME" chmod +x /tmp/test.sh
     VERIFIER_OUTPUT=$(docker exec -w / "$CONTAINER_NAME" bash -c "cd /app && /tmp/test.sh 2>&1" || true)
 
-    # Check for reward in verifier output or exit code
-    if echo "$VERIFIER_OUTPUT" | grep -qi "pass\|success\|reward.*1"; then
+    # TB2 canonical protocol: test.sh writes reward to /logs/verifier/reward.txt
+    REWARD_FILE=$(docker exec -w / "$CONTAINER_NAME" cat /logs/verifier/reward.txt 2>/dev/null | tr -d '[:space:]' || echo "")
+    if [ "$REWARD_FILE" = "1" ]; then
+        REWARD="1.0"
+    fi
+    # Fallback: grep stdout for non-standard test.sh scripts
+    if [ "$REWARD" = "0.0" ] && echo "$VERIFIER_OUTPUT" | grep -qi "pass\|success\|reward.*1"; then
         REWARD="1.0"
     fi
 fi
@@ -502,10 +508,18 @@ fi
 # Also check test_outputs.py
 if [ "$REWARD" = "0.0" ]; then
     TEST_RESULT=$(docker exec -w / "$CONTAINER_NAME" bash -c '
-        export PATH="/root/.local/bin:$PATH"
+        export PATH="/root/.local/bin:/usr/local/bin:$PATH"
         if [ -f /tests/test_outputs.py ]; then
-            cd /app && export PATH=/root/.local/bin:/usr/local/bin:$PATH; pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || uvx --version >/dev/null 2>&1; python3 -m pytest /tests/test_outputs.py -rA 2>&1 || uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1
-            echo "EXIT_CODE=$?"
+            cd /app
+            pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || true
+            python3 -m pytest /tests/test_outputs.py -rA 2>&1
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -ne 0 ]; then
+                # Fallback to uvx only if python3 pytest failed
+                uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1
+                PYTEST_EXIT=$?
+            fi
+            echo "EXIT_CODE=$PYTEST_EXIT"
         else
             echo "NO_TESTS"
             echo "EXIT_CODE=0"
