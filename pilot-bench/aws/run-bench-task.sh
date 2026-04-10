@@ -461,12 +461,20 @@ echo ""
 TASK_START=$(date +%s)
 
 # Run pilot inside container
+# When OAuth token is available, DON'T pass ANTHROPIC_API_KEY — it takes precedence
+# over apiKeyHelper in settings.json and the API key account may have no credits.
+# Pilot's effort classifier will fall back to static mapping (acceptable).
+EXEC_ENV_ARGS=(-e IS_SANDBOX=1 -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    # OAuth via apiKeyHelper in settings.json — don't pass API key
+    echo "  Auth: OAuth (apiKeyHelper), not passing ANTHROPIC_API_KEY"
+else
+    # Fallback: bare API key
+    EXEC_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
+    echo "  Auth: ANTHROPIC_API_KEY"
+fi
 docker exec \
-    -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-    -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
-    -e IS_SANDBOX=1 \
-    -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 \
-    -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "${EXEC_ENV_ARGS[@]}" \
     "$CONTAINER_NAME" \
     timeout "${MAIN_TIMEOUT}" \
     pilot task "$INSTRUCTION" \
