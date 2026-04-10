@@ -138,17 +138,21 @@ PILOTCFG
 # ─── Step 1: Load secrets from SSM ────────────────────────────────────────────
 echo "--- Loading secrets from SSM ---"
 export ANTHROPIC_API_KEY=$(aws ssm get-parameter \
-    --name "${SSM_PREFIX}/ANTHROPIC_API_KEY" \
+    --name "${SSM_PREFIX}/ANTHROPIC_API_KEY" --with-decryption \
+    --query "Parameter.Value" --output text 2>/dev/null || echo "")
+export CLAUDE_CODE_OAUTH_TOKEN=$(aws ssm get-parameter \
+    --name "${SSM_PREFIX}/CLAUDE_CODE_OAUTH_TOKEN" --with-decryption \
     --query "Parameter.Value" --output text 2>/dev/null || echo "")
 GITHUB_TOKEN=$(aws ssm get-parameter \
     --name "${SSM_PREFIX}/GITHUB_TOKEN" \
     --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
-if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "ERROR: ANTHROPIC_API_KEY not found in SSM"
+if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    echo "ERROR: Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN found in SSM"
     exit 1
 fi
 echo "  API key loaded (${#ANTHROPIC_API_KEY} chars)"
+echo "  OAuth token loaded (${#CLAUDE_CODE_OAUTH_TOKEN} chars)"
 
 # ─── Step 2: Download assets from S3 ─────────────────────────────────────────
 echo ""
@@ -437,6 +441,7 @@ TASK_START=$(date +%s)
 # Run pilot inside container
 docker exec \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
     -e IS_SANDBOX=1 \
     -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 \
     -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
