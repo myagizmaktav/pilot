@@ -290,6 +290,17 @@ docker exec "$CONTAINER_NAME" bash -c '
     set -e
     chmod +x /usr/local/bin/pilot
 
+    # git (required by pilot preflight + Claude Code)
+    if ! command -v git &>/dev/null; then
+        echo "  Installing git..."
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq 2>&1 && apt-get install -y -qq git 2>&1
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache git 2>&1
+        fi
+    fi
+    echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
+
     # Node.js (required by Claude Code)
     if ! command -v node &>/dev/null; then
         echo "  Installing Node.js..."
@@ -334,6 +345,7 @@ echo "--- Validating dependencies ---"
 DEP_CHECK=$(docker exec -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$CONTAINER_NAME" bash -c '
     MISSING=""
+    command -v git     >/dev/null 2>&1 || MISSING="$MISSING git"
     command -v node    >/dev/null 2>&1 || MISSING="$MISSING node"
     command -v claude  >/dev/null 2>&1 || MISSING="$MISSING claude"
     command -v uvx     >/dev/null 2>&1 || MISSING="$MISSING uvx"
