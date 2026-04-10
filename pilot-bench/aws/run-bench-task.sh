@@ -118,14 +118,7 @@ executor:
       extend_timeout: true
       timeout_multiplier: 1.5
 quality:
-  enabled: true
-  gates:
-    - name: test
-      type: test
-      command: "if [ -f /tests/test_outputs.py ]; then cd /app && export PATH=/root/.local/bin:/usr/local/bin:$PATH; pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || uvx --version >/dev/null 2>&1; python3 -m pytest /tests/test_outputs.py -rA 2>&1 || uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1; fi"
-      required: false
-      timeout: 5m
-      max_retries: 0
+  enabled: false
 memory:
   path: /root/.pilot/data
   learning:
@@ -402,15 +395,8 @@ METAEOF
 }
 echo "  $DEP_CHECK"
 
-# Copy test files into container
-if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
-    echo "  Copying test files..."
-    docker exec -w / "$CONTAINER_NAME" mkdir -p /tests
-    for f in "$TASK_DIR/tests/"*; do
-        [ -f "$f" ] && docker cp "$f" "$CONTAINER_NAME:/tests/$(basename $f)"
-    done
-    echo "  Tests: $(docker exec -w / "$CONTAINER_NAME" ls /tests/ 2>/dev/null | tr '\n' ' ')"
-fi
+# NOTE: Test files are NOT copied before execution — that's oracle access (Harbor violation).
+# Tests are copied AFTER pilot exits, only for the verifier step.
 
 # ─── Step 7: Run environment bootstrap ────────────────────────────────────────
 echo ""
@@ -420,8 +406,6 @@ docker exec -w / "$CONTAINER_NAME" bash -c '
     (
         echo "=== FILES ==="
         ls /app/ 2>/dev/null | head -30
-        echo "=== TESTS ==="
-        head -50 /tests/test_outputs.py 2>/dev/null || echo "NO_TEST_FILE"
         echo "=== PYTHON PACKAGES ==="
         python3 -c "import torch; print(\"torch=\"+torch.__version__)" 2>/dev/null || echo "torch=missing"
         python3 -c "import scipy; print(\"scipy=\"+scipy.__version__)" 2>/dev/null || echo "scipy=missing"
@@ -487,6 +471,15 @@ echo "--- Running verifier ---"
 
 REWARD="0.0"
 VERIFIER_OUTPUT=""
+
+# Copy test files NOW (after pilot exits) — NOT before execution (oracle violation)
+if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
+    echo "  Copying test files for verifier..."
+    docker exec -w / "$CONTAINER_NAME" mkdir -p /tests
+    for f in "$TASK_DIR/tests/"*; do
+        [ -f "$f" ] && docker cp "$f" "$CONTAINER_NAME:/tests/$(basename $f)"
+    done
+fi
 
 # Try running test.sh from the task definition
 if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
