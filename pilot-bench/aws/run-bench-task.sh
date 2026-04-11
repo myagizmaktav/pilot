@@ -461,6 +461,7 @@ else
     EXEC_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
     echo "  Auth: ANTHROPIC_API_KEY"
 fi
+set +e  # handle pilot exit code ourselves
 docker exec -w /app \
     "${EXEC_ENV_ARGS[@]}" \
     "$CONTAINER_NAME" \
@@ -470,12 +471,38 @@ docker exec -w /app \
         --project /app \
         --verbose \
         --result-json /logs/agent/pilot-result.json \
-    2>&1 | tee "${LOGS_DIR}/pilot-stdout.log" || true
+    2>&1 | tee "${LOGS_DIR}/pilot-stdout.log"
+PILOT_EXIT=${PIPESTATUS[0]}
+set -e
+echo "  Pilot exit code: $PILOT_EXIT"
 
 TASK_END=$(date +%s)
 TASK_DURATION=$((TASK_END - TASK_START))
 echo ""
 echo "Task duration: ${TASK_DURATION}s"
+
+# ─── Trial validity checks (detect fake wins) ────────────────────────────────
+# Fake-win scenarios to catch:
+#   1. Pilot crashed (PILOT_EXIT != 0)
+#   2. Claude Code hit rate limit (markers in pilot-stdout.log)
+#   3. Claude did nothing — /app unchanged vs baseline
+# In any of these cases, skip the verifier and mark the trial as non-scoring.
+
+PILOT_RATE_LIMITED=0
+RESET_TIME=""
+if grep -qE "You've hit your limit|rate_limit_error|overloaded_error" \
+    "${LOGS_DIR}/pilot-stdout.log" 2>/dev/null; then
+    PILOT_RATE_LIMITED=1
+    RESET_TIME=$(grep -oE "resets [0-9apm:]+ \([A-Z]+\)" "${LOGS_DIR}/pilot-stdout.log" | head -1)
+    echo "  Rate limit detected: ${RESET_TIME:-unknown reset}"
+fi
+
+# Count /app changes since the initial git commit (Step 7 init baseline).
+# Excludes .pilot-env-context.txt which the bootstrap writes itself.
+CHANGES=$(docker exec -w /app "$CONTAINER_NAME" \
+    bash -c "git -C /app status --porcelain 2>/dev/null | grep -v '.pilot-env-context.txt' | wc -l" 2>/dev/null || echo "0")
+CHANGES=$(echo "$CHANGES" | tr -d '[:space:]')
+echo "  Files changed in /app: ${CHANGES:-0}"
 
 # ─── Step 9: Run verifier ─────────────────────────────────────────────────────
 echo ""
@@ -483,68 +510,92 @@ echo "--- Running verifier ---"
 
 REWARD="0.0"
 VERIFIER_OUTPUT=""
+TRIAL_STATUS="real"  # real | pilot_failed | rate_limited | no_op | no_tests
 
-# Copy test files NOW (after pilot exits) — NOT before execution (oracle violation)
-if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
-    echo "  Copying test files for verifier..."
-    docker exec -w / "$CONTAINER_NAME" mkdir -p /tests
-    for f in "$TASK_DIR/tests/"*; do
-        [ -f "$f" ] && docker cp "$f" "$CONTAINER_NAME:/tests/$(basename $f)"
-    done
-fi
+# Guard: skip verifier entirely if pilot failed, rate-limited, or did nothing.
+# This prevents scoring against the Docker image's untouched /app state.
+if [ "${PILOT_EXIT:-0}" -ne 0 ]; then
+    TRIAL_STATUS="pilot_failed"
+    VERIFIER_OUTPUT="SKIPPED: pilot exited with status ${PILOT_EXIT}"
+    echo "  $VERIFIER_OUTPUT"
+elif [ "${PILOT_RATE_LIMITED:-0}" -eq 1 ]; then
+    TRIAL_STATUS="rate_limited"
+    VERIFIER_OUTPUT="SKIPPED: Claude Code rate-limited (${RESET_TIME:-unknown reset})"
+    echo "  $VERIFIER_OUTPUT"
+elif [ "${CHANGES:-0}" -eq 0 ]; then
+    TRIAL_STATUS="no_op"
+    VERIFIER_OUTPUT="SKIPPED: pilot made zero changes to /app"
+    echo "  $VERIFIER_OUTPUT"
+else
+    # Pilot ran successfully and modified /app — run the real verifier.
 
-# Try running test.sh from the task definition
-# TB2 task structure: $TASK_DIR/tests/test.sh (NOT $TASK_DIR/test.sh)
-TEST_SH_PATH=""
-if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/tests/test.sh" ]; then
-    TEST_SH_PATH="$TASK_DIR/tests/test.sh"
-elif [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
-    TEST_SH_PATH="$TASK_DIR/test.sh"
-fi
-
-if [ -n "$TEST_SH_PATH" ]; then
-    echo "  Running canonical test.sh: $TEST_SH_PATH"
-    docker cp "$TEST_SH_PATH" "$CONTAINER_NAME:/tmp/test.sh"
-    docker exec -w / "$CONTAINER_NAME" chmod +x /tmp/test.sh
-    VERIFIER_OUTPUT=$(docker exec -w / "$CONTAINER_NAME" bash -c "cd /app && /tmp/test.sh 2>&1" || true)
-
-    # TB2 canonical protocol: test.sh writes reward to /logs/verifier/reward.txt
-    REWARD_FILE=$(docker exec -w / "$CONTAINER_NAME" cat /logs/verifier/reward.txt 2>/dev/null | tr -d '[:space:]' || echo "")
-    if [ "$REWARD_FILE" = "1" ]; then
-        REWARD="1.0"
+    # Copy test files NOW (after pilot exits) — NOT before execution (oracle violation)
+    if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
+        echo "  Copying test files for verifier..."
+        docker exec -w / "$CONTAINER_NAME" mkdir -p /tests
+        for f in "$TASK_DIR/tests/"*; do
+            [ -f "$f" ] && docker cp "$f" "$CONTAINER_NAME:/tests/$(basename $f)"
+        done
     fi
-    # Fallback: grep stdout for non-standard test.sh scripts
-    if [ "$REWARD" = "0.0" ] && echo "$VERIFIER_OUTPUT" | grep -qi "pass\|success\|reward.*1"; then
-        REWARD="1.0"
-    fi
-fi
 
-# Also check test_outputs.py
-if [ "$REWARD" = "0.0" ]; then
-    TEST_RESULT=$(docker exec -w / "$CONTAINER_NAME" bash -c '
-        export PATH="/root/.local/bin:/usr/local/bin:$PATH"
-        if [ -f /tests/test_outputs.py ]; then
-            cd /app
-            pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || true
-            python3 -m pytest /tests/test_outputs.py -rA 2>&1
-            PYTEST_EXIT=$?
-            if [ $PYTEST_EXIT -ne 0 ]; then
-                # Fallback to uvx only if python3 pytest failed
-                uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1
-                PYTEST_EXIT=$?
-            fi
-            echo "EXIT_CODE=$PYTEST_EXIT"
-        else
-            echo "NO_TESTS"
-            echo "EXIT_CODE=0"
+    # Try running test.sh from the task definition
+    # TB2 task structure: $TASK_DIR/tests/test.sh (NOT $TASK_DIR/test.sh)
+    TEST_SH_PATH=""
+    if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/tests/test.sh" ]; then
+        TEST_SH_PATH="$TASK_DIR/tests/test.sh"
+    elif [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
+        TEST_SH_PATH="$TASK_DIR/test.sh"
+    fi
+
+    if [ -n "$TEST_SH_PATH" ]; then
+        echo "  Running canonical test.sh: $TEST_SH_PATH"
+        docker cp "$TEST_SH_PATH" "$CONTAINER_NAME:/tmp/test.sh"
+        docker exec -w / "$CONTAINER_NAME" chmod +x /tmp/test.sh
+        VERIFIER_OUTPUT=$(docker exec -w / "$CONTAINER_NAME" bash -c "cd /app && /tmp/test.sh 2>&1" || true)
+
+        # TB2 canonical protocol: test.sh writes reward to /logs/verifier/reward.txt
+        REWARD_FILE=$(docker exec -w / "$CONTAINER_NAME" cat /logs/verifier/reward.txt 2>/dev/null | tr -d '[:space:]' || echo "")
+        if [ "$REWARD_FILE" = "1" ]; then
+            REWARD="1.0"
         fi
-    ' 2>/dev/null || true)
-
-    EXIT_CODE=$(echo "$TEST_RESULT" | grep "EXIT_CODE=" | tail -1 | cut -d= -f2)
-    if [ "${EXIT_CODE:-1}" = "0" ]; then
-        REWARD="1.0"
+        # Fallback: grep stdout for non-standard test.sh scripts
+        if [ "$REWARD" = "0.0" ] && echo "$VERIFIER_OUTPUT" | grep -qi "pass\|success\|reward.*1"; then
+            REWARD="1.0"
+        fi
     fi
-    VERIFIER_OUTPUT="${VERIFIER_OUTPUT}\n${TEST_RESULT}"
+
+    # Also check test_outputs.py
+    if [ "$REWARD" = "0.0" ]; then
+        TEST_RESULT=$(docker exec -w / "$CONTAINER_NAME" bash -c '
+            export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+            if [ -f /tests/test_outputs.py ]; then
+                cd /app
+                pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || true
+                python3 -m pytest /tests/test_outputs.py -rA 2>&1
+                PYTEST_EXIT=$?
+                if [ $PYTEST_EXIT -ne 0 ]; then
+                    # Fallback to uvx only if python3 pytest failed
+                    uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1
+                    PYTEST_EXIT=$?
+                fi
+                echo "EXIT_CODE=$PYTEST_EXIT"
+            else
+                echo "NO_TESTS"
+                echo "EXIT_CODE=99"  # missing verifier = failure, not success
+            fi
+        ' 2>/dev/null || true)
+
+        EXIT_CODE=$(echo "$TEST_RESULT" | grep "EXIT_CODE=" | tail -1 | cut -d= -f2)
+        if [ "${EXIT_CODE:-99}" = "0" ]; then
+            REWARD="1.0"
+        fi
+        VERIFIER_OUTPUT="${VERIFIER_OUTPUT}\n${TEST_RESULT}"
+
+        # If no verifier existed at all (neither test.sh nor test_outputs.py), flag it
+        if [ -z "$TEST_SH_PATH" ] && echo "$TEST_RESULT" | grep -q "NO_TESTS"; then
+            TRIAL_STATUS="no_tests"
+        fi
+    fi
 fi
 
 echo "Reward: $REWARD"
@@ -571,6 +622,11 @@ cat > "${RESULTS_DIR}/trial-meta.json" << EOF
     "model": "${MODEL}",
     "docker_image": "${DOCKER_IMAGE}",
     "reward": ${REWARD},
+    "trial_status": "${TRIAL_STATUS}",
+    "pilot_exit": ${PILOT_EXIT:-0},
+    "changes_in_app": ${CHANGES:-0},
+    "rate_limited": ${PILOT_RATE_LIMITED:-0},
+    "reset_time": "${RESET_TIME}",
     "duration_sec": ${TASK_DURATION},
     "instance_id": "$(curl -s http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo unknown)",
     "started_at": "$(date -u -d @${TASK_START} +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)",

@@ -180,6 +180,10 @@ class AWSBenchOrchestrator:
                     if reward is None:
                         reward = self._parse_reward(result.get("stdout", ""))
 
+                    # Also read trial_status from trial-meta.json — distinguishes
+                    # genuine failures from infra issues (rate limit, pilot crash, no-op).
+                    trial_status = self._read_trial_status_from_s3(task_name, trial_id)
+
                     trial = TrialResult(
                         task_name=task_name,
                         trial_id=trial_id,
@@ -197,9 +201,14 @@ class AWSBenchOrchestrator:
 
                     self.pool.release_instance(instance_id)
 
+                    # Mark non-real trials with a tag so the dashboard can separate them
+                    status_tag = ""
+                    if trial_status and trial_status != "real":
+                        status_tag = f" [{trial_status}]"
+
                     logger.info(
                         f"[{completed + failed}/{total_trials}] "
-                        f"{task_name}/{trial_id}: {status} "
+                        f"{task_name}/{trial_id}: {status}{status_tag} "
                         f"reward={reward} duration={int(duration)}s"
                     )
 
@@ -416,6 +425,24 @@ memory:
             return None
         except Exception as e:  # pragma: no cover - defensive
             logger.debug(f"Failed to read reward from S3 for {task_name}/{trial_id}: {e}")
+            return None
+
+    def _read_trial_status_from_s3(self, task_name: str, trial_id: str) -> str | None:
+        """Read trial_status from trial-meta.json on S3.
+
+        Returns one of: real, pilot_failed, rate_limited, no_op, no_tests — or None
+        if the metadata file isn't available.
+        """
+        key = f"{S3_RUNS_PREFIX}/{self.run_id}/{task_name}/{trial_id}/trial-meta.json"
+        try:
+            resp = self.s3.get_object(Bucket=self.s3_bucket, Key=key)
+            content = resp["Body"].read().decode("utf-8")
+            meta = json.loads(content)
+            return meta.get("trial_status")
+        except (self.s3.exceptions.NoSuchKey, ValueError, KeyError):
+            return None
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"Failed to read trial_status from S3 for {task_name}/{trial_id}: {e}")
             return None
 
     def _parse_reward(self, stdout: str) -> float:
