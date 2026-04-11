@@ -174,8 +174,11 @@ class AWSBenchOrchestrator:
                     status = result.get("status", "Failed")
                     duration = result.get("duration_sec", 0)
 
-                    # Parse reward from SSM output
-                    reward = self._parse_reward(result.get("stdout", ""))
+                    # Parse reward — first try S3 (authoritative), fallback to stdout
+                    # SSM stdout truncates at 24KB which often cuts off the "Reward:" line
+                    reward = self._read_reward_from_s3(task_name, trial_id)
+                    if reward is None:
+                        reward = self._parse_reward(result.get("stdout", ""))
 
                     trial = TrialResult(
                         task_name=task_name,
@@ -397,8 +400,26 @@ memory:
 
         return dispatched
 
+    def _read_reward_from_s3(self, task_name: str, trial_id: str) -> float | None:
+        """Read authoritative reward from S3 (reward.txt written by task runner).
+
+        SSM stdout is capped at 24KB and often truncates the final "Reward:" line,
+        so we prefer reading the reward file directly from S3.
+        Returns None if the file isn't available yet.
+        """
+        key = f"{S3_RUNS_PREFIX}/{self.run_id}/{task_name}/{trial_id}/reward.txt"
+        try:
+            resp = self.s3.get_object(Bucket=self.s3_bucket, Key=key)
+            content = resp["Body"].read().decode("utf-8").strip()
+            return float(content)
+        except (self.s3.exceptions.NoSuchKey, ValueError, KeyError):
+            return None
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug(f"Failed to read reward from S3 for {task_name}/{trial_id}: {e}")
+            return None
+
     def _parse_reward(self, stdout: str) -> float:
-        """Extract reward from task runner stdout."""
+        """Extract reward from task runner stdout (fallback when S3 unavailable)."""
         for line in reversed(stdout.splitlines()):
             line = line.strip()
             if line.startswith("Reward:"):
