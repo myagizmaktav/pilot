@@ -256,8 +256,10 @@ sleep 2
 
 echo "  Container started: $(docker ps --filter name=$CONTAINER_NAME --format '{{.Status}}')"
 
-# Ensure verifier output directory exists (TB2 test.sh writes reward to /logs/verifier/reward.txt)
-docker exec -w / "$CONTAINER_NAME" mkdir -p /logs/verifier
+# Ensure verifier + agent output directories exist
+# - /logs/verifier/reward.txt ← TB2 test.sh writes here
+# - /logs/agent/pilot-result.json ← pilot writes here
+docker exec -w / "$CONTAINER_NAME" mkdir -p /logs/verifier /logs/agent
 
 # ─── Step 6: Inject pilot + deps into container ──────────────────────────────
 echo ""
@@ -492,8 +494,17 @@ if [ -n "$TASK_DIR" ] && [ -d "$TASK_DIR/tests" ]; then
 fi
 
 # Try running test.sh from the task definition
-if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
-    docker cp "$TASK_DIR/test.sh" "$CONTAINER_NAME:/tmp/test.sh"
+# TB2 task structure: $TASK_DIR/tests/test.sh (NOT $TASK_DIR/test.sh)
+TEST_SH_PATH=""
+if [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/tests/test.sh" ]; then
+    TEST_SH_PATH="$TASK_DIR/tests/test.sh"
+elif [ -n "$TASK_DIR" ] && [ -f "$TASK_DIR/test.sh" ]; then
+    TEST_SH_PATH="$TASK_DIR/test.sh"
+fi
+
+if [ -n "$TEST_SH_PATH" ]; then
+    echo "  Running canonical test.sh: $TEST_SH_PATH"
+    docker cp "$TEST_SH_PATH" "$CONTAINER_NAME:/tmp/test.sh"
     docker exec -w / "$CONTAINER_NAME" chmod +x /tmp/test.sh
     VERIFIER_OUTPUT=$(docker exec -w / "$CONTAINER_NAME" bash -c "cd /app && /tmp/test.sh 2>&1" || true)
 
