@@ -29,7 +29,7 @@ class SSMExecutor:
         trial_id: str,
         run_id: str,
         *,
-        model: str = "claude-opus-4-6",
+        model: str = "glm-5.1",
         timeout_sec: int = SSM_COMMAND_TIMEOUT_SEC,
         s3_bucket: str = S3_BUCKET,
     ) -> str:

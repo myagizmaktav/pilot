@@ -36,7 +36,7 @@ TASK_RUNNER_S3_KEY = f"{S3_ASSETS_PREFIX}/run-bench-task.sh"
 TASK_MANIFEST_S3_KEY = f"{S3_ASSETS_PREFIX}/tasks-manifest.json"
 
 # Execution defaults
-DEFAULT_MODEL = "claude-opus-4-6"
+DEFAULT_MODEL = "glm-5.1"
 DEFAULT_K_TRIALS = 1
 DEFAULT_MAX_PARALLEL = 5
 MAIN_TIMEOUT_SEC = 5400  # 90 min — matches Harbor PilotAgent

@@ -332,11 +332,7 @@ executor:
     lint_on_save: false
   heartbeat_timeout: 15m
   model_routing:
-    enabled: true
-    trivial: "claude-haiku-4-5-20251001"
-    simple: "claude-sonnet-4-6"
-    medium: "{m}"
-    complex: "{m}"
+    enabled: false
   timeout:
     default: 30m
     trivial: 15m
@@ -350,9 +346,7 @@ executor:
     medium: high
     complex: high
   effort_classifier:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    timeout: 30s
+    enabled: false
   intent_judge:
     enabled: false
   retry:
@@ -376,7 +370,7 @@ quality:
   gates:
     - name: test
       type: test
-      command: "if [ -f /tests/test_outputs.py ]; then cd /app && export PATH=/root/.local/bin:/usr/local/bin:$PATH; pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || uvx --version >/dev/null 2>&1; python3 -m pytest /tests/test_outputs.py -rA 2>&1 || uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1; fi"
+      command: "if [ -f /tests/test_outputs.py ]; then cd /app && export PATH=/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:$PATH; pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || uvx --version >/dev/null 2>&1; python3 -m pytest /tests/test_outputs.py -rA 2>&1 || uvx -p 3.13 --with pytest pytest /tests/test_outputs.py -rA 2>&1; fi"
       required: true
       timeout: 5m
       max_retries: 2
@@ -392,6 +386,9 @@ memory:
         """Dispatch tasks to idle instances. Returns number dispatched."""
         dispatched = 0
         while work_queue and self.pool.get_idle_count() > 0:
+            # Enforce max_parallel at runtime — scale_up only caps at startup
+            if self.ssm.active_count >= self.max_parallel:
+                break
             instance_id = self.pool.acquire_instance()
             if not instance_id:
                 break

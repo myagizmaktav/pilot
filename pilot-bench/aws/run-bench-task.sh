@@ -21,6 +21,7 @@
 #   DOCKER_TAG    — Docker image tag (default: 20251031)
 
 set -euo pipefail
+echo "DEBUG: run-bench-task.sh started"
 
 # Defaults
 S3_BUCKET="${S3_BUCKET:-pilot-s3-agent-data}"
@@ -78,11 +79,7 @@ executor:
     lint_on_save: false
   heartbeat_timeout: 15m
   model_routing:
-    enabled: true
-    trivial: "claude-haiku-4-5-20251001"
-    simple: "claude-sonnet-4-6"
-    medium: "${model}"
-    complex: "${model}"
+    enabled: false
   timeout:
     default: 30m
     trivial: 15m
@@ -96,9 +93,7 @@ executor:
     medium: high
     complex: high
   effort_classifier:
-    enabled: true
-    model: claude-haiku-4-5-20251001
-    timeout: 30s
+    enabled: false
   intent_judge:
     enabled: false
   retry:
@@ -128,22 +123,25 @@ PILOTCFG
 
 # ─── Step 1: Load secrets from SSM ────────────────────────────────────────────
 echo "--- Loading secrets from SSM ---"
-export ANTHROPIC_API_KEY=$(aws ssm get-parameter \
-    --name "${SSM_PREFIX}/ANTHROPIC_API_KEY" --with-decryption \
-    --query "Parameter.Value" --output text 2>/dev/null || echo "")
-export CLAUDE_CODE_OAUTH_TOKEN=$(aws ssm get-parameter \
-    --name "${SSM_PREFIX}/CLAUDE_CODE_OAUTH_TOKEN" --with-decryption \
-    --query "Parameter.Value" --output text 2>/dev/null || echo "")
+echo "DEBUG: Loading ANTHROPIC_AUTH_TOKEN from SSM..."
+export ANTHROPIC_AUTH_TOKEN=$(aws ssm get-parameter \
+    --name "${SSM_PREFIX}/ANTHROPIC_AUTH_TOKEN" --with-decryption \
+    --query "Parameter.Value" --output text 2>&1 | tee /tmp/ssm-auth-debug.log || { echo "ERROR: Failed to load ANTHROPIC_AUTH_TOKEN"; cat /tmp/ssm-auth-debug.log; exit 1; })
+export ANTHROPIC_BASE_URL=$(aws ssm get-parameter \
+    --name "${SSM_PREFIX}/ANTHROPIC_BASE_URL" \
+    --query "Parameter.Value" --output text 2>/dev/null || echo "https://api.z.ai/api/anthropic")
+export ANTHROPIC_MODEL="${MODEL:-glm-5.1}"
 GITHUB_TOKEN=$(aws ssm get-parameter \
     --name "${SSM_PREFIX}/GITHUB_TOKEN" \
     --query "Parameter.Value" --output text 2>/dev/null || echo "")
 
-if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    echo "ERROR: Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN found in SSM"
+if [ -z "$ANTHROPIC_AUTH_TOKEN" ]; then
+    echo "ERROR: ANTHROPIC_AUTH_TOKEN not found in SSM"
     exit 1
 fi
-echo "  API key loaded (${#ANTHROPIC_API_KEY} chars)"
-echo "  OAuth token loaded (${#CLAUDE_CODE_OAUTH_TOKEN} chars)"
+echo "  Auth token loaded (${#ANTHROPIC_AUTH_TOKEN} chars)"
+echo "  Base URL: $ANTHROPIC_BASE_URL"
+echo "  Model: $ANTHROPIC_MODEL"
 
 # ─── Step 2: Download assets from S3 ─────────────────────────────────────────
 echo ""
@@ -284,77 +282,108 @@ fi
 docker exec -w / "$CONTAINER_NAME" mkdir -p /root/.pilot/data
 docker cp /root/.pilot/data/pilot.db "$CONTAINER_NAME:/root/.pilot/data/pilot.db" 2>/dev/null || echo "  No learning DB to inject"
 
-# Single setup script: install all deps + configure in one docker exec
-docker exec -w / "$CONTAINER_NAME" bash -c '
-    set -e
-    chmod +x /usr/local/bin/pilot
+# Setup: copy Golden AMI tool bundle (or fallback to runtime install)
+if [ -d "/opt/pilot-tools" ] && [ -x "/opt/pilot-tools/bin/node" ]; then
+    echo "  Using Golden AMI tool bundle..."
+    docker cp /opt/pilot-tools "$CONTAINER_NAME:/opt/pilot-tools"
 
-    # Base deps (curl, git — many containers lack both)
-    if ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
-        echo "  Installing base deps (git, curl)..."
-        if command -v apt-get &>/dev/null; then
-            apt-get update -qq 2>&1 && apt-get install -y -qq git curl ca-certificates 2>&1
-        elif command -v apk &>/dev/null; then
-            apk add --no-cache git curl ca-certificates 2>&1
+    docker exec -w / "$CONTAINER_NAME" bash -c '
+        set -e
+        chmod +x /usr/local/bin/pilot
+
+        # Ensure git and curl are present (bundle does not include them)
+        if ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
+            echo "  Installing base deps (git, curl)..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -qq 2>&1 && apt-get install -y -qq git curl ca-certificates 2>&1
+            elif command -v apk &>/dev/null; then
+                apk add --no-cache git curl ca-certificates 2>&1
+            fi
         fi
-    fi
-    echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
-    echo "  Curl: $(curl --version 2>/dev/null | head -1 || echo MISSING)"
+        echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
+        echo "  Curl: $(curl --version 2>/dev/null | head -1 || echo MISSING)"
 
-    # Node.js (required by Claude Code) — direct binary, .tar.gz (no xz dependency)
-    if ! command -v node &>/dev/null; then
-        echo "  Installing Node.js via binary tarball..."
-        NODE_VERSION=22.14.0
-        curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
-            | tar -xz -C /usr/local --strip-components=1 2>&1
-        hash -r
-    fi
-    echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
+        # Persist PATH for all subsequent docker exec calls
+        export PATH="/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:$PATH"
+        echo "export PATH=\"/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:\$PATH\"" >> /root/.bashrc
+        echo "PATH=/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:$PATH" >> /etc/environment
 
-    # Claude Code
-    if ! command -v claude &>/dev/null; then
-        echo "  Installing Claude Code..."
-        npm install -g @anthropic-ai/claude-code 2>&1
-    fi
-    echo "  Claude: $(claude --version 2>/dev/null || echo MISSING)"
+        echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
+        echo "  Claude: $(claude --version 2>/dev/null || echo MISSING)"
+        echo "  uv: $(uv --version 2>/dev/null || echo MISSING)"
+        echo "  uvx: $(uvx --version 2>/dev/null || echo MISSING)"
+        echo "  pilot: $(pilot version 2>/dev/null || echo installed)"
+    '
+else
+    echo "  WARNING: /opt/pilot-tools not found on host, falling back to runtime install..."
+    docker exec -w / "$CONTAINER_NAME" bash -c '
+        set -e
+        chmod +x /usr/local/bin/pilot
 
-    # uv/uvx (verifiers need it) — download script first, then execute (avoids nested pipe issues)
-    if ! command -v uv &>/dev/null; then
-        echo "  Installing uv..."
-        curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh 2>&1
-        sh /tmp/uv-install.sh 2>&1
-        rm -f /tmp/uv-install.sh
-    fi
+        # Base deps (curl, git — many containers lack both)
+        if ! command -v git &>/dev/null || ! command -v curl &>/dev/null; then
+            echo "  Installing base deps (git, curl)..."
+            if command -v apt-get &>/dev/null; then
+                apt-get update -qq 2>&1 && apt-get install -y -qq git curl ca-certificates 2>&1
+            elif command -v apk &>/dev/null; then
+                apk add --no-cache git curl ca-certificates 2>&1
+            fi
+        fi
+        echo "  Git: $(git --version 2>/dev/null || echo MISSING)"
+        echo "  Curl: $(curl --version 2>/dev/null | head -1 || echo MISSING)"
 
-    # Persist PATH for all subsequent docker exec calls
-    export PATH="/root/.local/bin:/usr/local/bin:$PATH"
-    echo "export PATH=\"/root/.local/bin:/usr/local/bin:\$PATH\"" >> /root/.bashrc
-    echo "PATH=/root/.local/bin:/usr/local/bin:$PATH" >> /etc/environment
+        # Node.js (required by Claude Code) — direct binary, .tar.gz (no xz dependency)
+        if ! command -v node &>/dev/null; then
+            echo "  Installing Node.js via binary tarball..."
+            NODE_VERSION=22.14.0
+            curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" \
+                | tar -xz -C /usr/local --strip-components=1 2>&1
+            hash -r
+        fi
+        echo "  Node: $(node --version 2>/dev/null || echo MISSING)"
 
-    echo "  uv: $(uv --version 2>/dev/null || echo MISSING)"
-    echo "  uvx: $(uvx --version 2>/dev/null || echo MISSING)"
-    echo "  pilot: $(pilot version 2>/dev/null || echo installed)"
-'
+        # Claude Code
+        if ! command -v claude &>/dev/null; then
+            echo "  Installing Claude Code..."
+            npm install -g @anthropic-ai/claude-code 2>&1
+        fi
+        echo "  Claude: $(claude --version 2>/dev/null || echo MISSING)"
+
+        # uv/uvx (verifiers need it) — download script first, then execute (avoids nested pipe issues)
+        if ! command -v uv &>/dev/null; then
+            echo "  Installing uv..."
+            curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh 2>&1
+            sh /tmp/uv-install.sh 2>&1
+            rm -f /tmp/uv-install.sh
+        fi
+
+        # Persist PATH for all subsequent docker exec calls
+        export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+        echo "export PATH=\"/root/.local/bin:/usr/local/bin:\$PATH\"" >> /root/.bashrc
+        echo "PATH=/root/.local/bin:/usr/local/bin:$PATH" >> /etc/environment
+
+        echo "  uv: $(uv --version 2>/dev/null || echo MISSING)"
+        echo "  uvx: $(uvx --version 2>/dev/null || echo MISSING)"
+        echo "  pilot: $(pilot version 2>/dev/null || echo installed)"
+    '
+fi
 
 # ─── Step 6b: Configure Claude Code auth ─────────────────────────────────────
 echo ""
 echo "--- Configuring Claude Code auth ---"
 
-# Pass OAuth token via CLAUDE_CODE_OAUTH_TOKEN env var (not apiKeyHelper).
-# apiKeyHelper expects an API key, not an OAuth token — causes "Invalid API key".
-if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    echo "  Auth: OAuth token will be passed via CLAUDE_CODE_OAUTH_TOKEN env var"
-elif [ -n "$ANTHROPIC_API_KEY" ]; then
-    echo "  Auth: Using ANTHROPIC_API_KEY (fallback)"
-else
-    echo "  Auth: WARNING — no auth configured"
-fi
+# GLM via Z.AI: pass ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL + ANTHROPIC_MODEL
+# Claude Code reads these env vars to route to the Z.AI Anthropic-compatible endpoint.
+echo "  Auth: GLM via Z.AI API"
+echo "  ANTHROPIC_AUTH_TOKEN: loaded (${#ANTHROPIC_AUTH_TOKEN} chars)"
+echo "  ANTHROPIC_BASE_URL: $ANTHROPIC_BASE_URL"
+echo "  ANTHROPIC_MODEL: $ANTHROPIC_MODEL"
 
 # ─── Step 6c: Validate critical dependencies ─────────────────────────────────
 echo ""
 echo "--- Validating dependencies ---"
 
-DEP_CHECK=$(docker exec -w / -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+DEP_CHECK=$(docker exec -w / -e PATH="/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$CONTAINER_NAME" bash -c '
     MISSING=""
     command -v git     >/dev/null 2>&1 || MISSING="$MISSING git"
@@ -451,16 +480,16 @@ TASK_START=$(date +%s)
 # When OAuth token is available, DON'T pass ANTHROPIC_API_KEY — it takes precedence
 # over apiKeyHelper in settings.json and the API key account may have no credits.
 # Pilot's effort classifier will fall back to static mapping (acceptable).
-EXEC_ENV_ARGS=(-e IS_SANDBOX=1 -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 -e PATH="/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-    # Pass OAuth token as env var — the correct auth mechanism for setup-token tokens
-    EXEC_ENV_ARGS+=(-e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN")
-    echo "  Auth: CLAUDE_CODE_OAUTH_TOKEN env var"
-else
-    # Fallback: bare API key
-    EXEC_ENV_ARGS+=(-e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY")
-    echo "  Auth: ANTHROPIC_API_KEY"
-fi
+EXEC_ENV_ARGS=(-e IS_SANDBOX=1 -e CLAUDE_CODE_MAX_OUTPUT_TOKENS=54000 -e PATH="/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+# GLM via Z.AI: pass auth token, base URL, and model to Claude Code
+EXEC_ENV_ARGS+=(
+    -e ANTHROPIC_AUTH_TOKEN="$ANTHROPIC_AUTH_TOKEN"
+    -e ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL"
+    -e ANTHROPIC_MODEL="$ANTHROPIC_MODEL"
+)
+echo "  Auth: ANTHROPIC_AUTH_TOKEN (GLM via Z.AI)"
+echo "  Base URL: $ANTHROPIC_BASE_URL"
+echo "  Model: $ANTHROPIC_MODEL"
 set +e  # handle pilot exit code ourselves
 docker exec -w /app \
     "${EXEC_ENV_ARGS[@]}" \
@@ -567,7 +596,7 @@ else
     # Also check test_outputs.py
     if [ "$REWARD" = "0.0" ]; then
         TEST_RESULT=$(docker exec -w / "$CONTAINER_NAME" bash -c '
-            export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+            export PATH="/opt/pilot-tools/bin:/root/.local/bin:/usr/local/bin:$PATH"
             if [ -f /tests/test_outputs.py ]; then
                 cd /app
                 pip install -q pytest 2>/dev/null || pip3 install -q pytest 2>/dev/null || true

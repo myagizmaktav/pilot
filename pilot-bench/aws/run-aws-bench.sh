@@ -21,7 +21,7 @@ cd "$(dirname "$0")"
 TASKS="break-filter-js-from-html,chess-best-move,gcode-to-text"  # Validation set
 K_TRIALS=1
 PARALLEL=5
-MODEL="${MODEL:-claude-opus-4-6}"
+MODEL="${MODEL:-glm-5.1}"
 RUN_ID="${RUN_ID:-aws-$(date +%Y%m%d-%H%M%S)}"
 EXTRACT_ONLY=false
 
