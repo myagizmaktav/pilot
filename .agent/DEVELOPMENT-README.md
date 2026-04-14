@@ -122,7 +122,7 @@ Disable via config: `executor.navigator.auto_init: false`
 
 ## Current State
 
-**Current Version:** v2.53.0 | **316 features working**
+**Current Version:** v2.95.0 | **316 features working**
 
 **Full implementation status:** `.agent/system/FEATURE-MATRIX.md`
 
