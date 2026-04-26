@@ -1,6 +1,12 @@
 package executor
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -264,5 +270,174 @@ func TestOpenCodeEventStructs(t *testing.T) {
 	}
 	if event.Usage.InputTokens != 100 {
 		t.Errorf("Usage.InputTokens = %d, want 100", event.Usage.InputTokens)
+	}
+}
+
+func TestOpenCodeBackendResolveOpenCodeModel(t *testing.T) {
+	backend := NewOpenCodeBackend(&OpenCodeConfig{Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	modelRef, modelString := backend.resolveOpenCodeModel("")
+	if modelRef == nil {
+		t.Fatal("expected model ref")
+	}
+	if modelRef.ProviderID != "dokproxy" || modelRef.ModelID != "gpt-5.4" {
+		t.Fatalf("unexpected model ref: %+v", *modelRef)
+	}
+	if modelString != "dokproxy/gpt-5.4" {
+		t.Fatalf("modelString = %q", modelString)
+	}
+}
+
+func TestOpenCodeBackendBuildMessagePayloads(t *testing.T) {
+	backend := NewOpenCodeBackend(&OpenCodeConfig{Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	payloads, err := backend.buildMessagePayloads(ExecuteOptions{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("buildMessagePayloads error = %v", err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want 2", len(payloads))
+	}
+
+	assertTextPartsPayload(t, payloads[0], "hello")
+	assertTextPartsPayload(t, payloads[1], "hello")
+	assertObjectModelPayload(t, payloads[0], "dokproxy", "gpt-5.4")
+	assertStringModelPayload(t, payloads[1], "dokproxy/gpt-5.4")
+}
+
+func TestOpenCodeBackendSendMessageRetriesLegacyOnSchemaMismatch(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		payloadMap := decodePayloadMap(t, body)
+
+		switch requestCount.Load() {
+		case 1:
+			assertPayloadPartsMap(t, payloadMap, "hello")
+			assertPayloadObjectModelMap(t, payloadMap, "dokproxy", "gpt-5.4")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":[{"expected":"string","path":["model"],"message":"Invalid input: expected string, received object"}]}`))
+		case 2:
+			assertPayloadPartsMap(t, payloadMap, "hello")
+			assertPayloadStringModelMap(t, payloadMap, "dokproxy/gpt-5.4")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"output":"ok"}`))
+		default:
+			t.Fatalf("unexpected extra retry")
+		}
+	}))
+	defer server.Close()
+
+	backend := NewOpenCodeBackend(&OpenCodeConfig{ServerURL: server.URL, Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	result, err := backend.sendMessage(context.Background(), "sess-1", ExecuteOptions{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("sendMessage error = %v", err)
+	}
+	if !result.Success || result.Output != "ok" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("requestCount = %d, want 2", got)
+	}
+}
+
+func TestShouldRetryOpenCodeMessageLegacy(t *testing.T) {
+	if !shouldRetryOpenCodeMessageLegacy(`{"path":["model"],"message":"Invalid input: expected string, received object"}`) {
+		t.Fatal("expected retry for model schema mismatch")
+	}
+	if shouldRetryOpenCodeMessageLegacy(`{"error":"boom"}`) {
+		t.Fatal("unexpected retry for unrelated error")
+	}
+}
+
+func decodePayloadMap(t *testing.T, body []byte) map[string]interface{} {
+	t.Helper()
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v\nbody=%s", err, string(body))
+	}
+	return payload
+}
+
+func assertTextPartsPayload(t *testing.T, payload openCodeMessagePayload, wantText string) {
+	t.Helper()
+	if len(payload.Parts) != 1 {
+		t.Fatalf("parts len = %d, want 1", len(payload.Parts))
+	}
+	if payload.Parts[0].Type != "text" {
+		t.Fatalf("part type = %q, want text", payload.Parts[0].Type)
+	}
+	if payload.Parts[0].Text != wantText {
+		t.Fatalf("part text = %q, want %q", payload.Parts[0].Text, wantText)
+	}
+}
+
+func assertObjectModelPayload(t *testing.T, payload openCodeMessagePayload, wantProvider, wantModel string) {
+	t.Helper()
+	model, ok := payload.Model.(*openCodeModelRef)
+	if !ok {
+		t.Fatalf("model type = %T, want *openCodeModelRef", payload.Model)
+	}
+	if model.ProviderID != wantProvider {
+		t.Fatalf("providerID = %q, want %q", model.ProviderID, wantProvider)
+	}
+	if model.ModelID != wantModel {
+		t.Fatalf("modelID = %q, want %q", model.ModelID, wantModel)
+	}
+}
+
+func assertStringModelPayload(t *testing.T, payload openCodeMessagePayload, want string) {
+	t.Helper()
+	model, ok := payload.Model.(string)
+	if !ok {
+		t.Fatalf("model type = %T, want string", payload.Model)
+	}
+	if model != want {
+		t.Fatalf("model = %q, want %q", model, want)
+	}
+}
+
+func assertPayloadPartsMap(t *testing.T, payload map[string]interface{}, wantText string) {
+	t.Helper()
+	parts, ok := payload["parts"].([]interface{})
+	if !ok || len(parts) != 1 {
+		t.Fatalf("parts = %#v, want single-element slice", payload["parts"])
+	}
+	part, ok := parts[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("part type = %T, want object", parts[0])
+	}
+	if part["type"] != "text" {
+		t.Fatalf("part type = %#v, want text", part["type"])
+	}
+	if part["text"] != wantText {
+		t.Fatalf("part text = %#v, want %q", part["text"], wantText)
+	}
+}
+
+func assertPayloadObjectModelMap(t *testing.T, payload map[string]interface{}, wantProvider, wantModel string) {
+	t.Helper()
+	model, ok := payload["model"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("model type = %T, want object", payload["model"])
+	}
+	if model["providerID"] != wantProvider {
+		t.Fatalf("providerID = %#v, want %q", model["providerID"], wantProvider)
+	}
+	if model["modelID"] != wantModel {
+		t.Fatalf("modelID = %#v, want %q", model["modelID"], wantModel)
+	}
+}
+
+func assertPayloadStringModelMap(t *testing.T, payload map[string]interface{}, want string) {
+	t.Helper()
+	model, ok := payload["model"].(string)
+	if !ok {
+		t.Fatalf("model type = %T, want string", payload["model"])
+	}
+	if model != want {
+		t.Fatalf("model = %q, want %q", model, want)
 	}
 }
