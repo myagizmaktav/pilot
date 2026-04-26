@@ -11,6 +11,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -81,8 +83,14 @@ echo ""
 # 3. Check for potential unused imports by running go build with verbose
 echo "Checking for build issues..."
 
-# Quick build to catch unused imports, undeclared names, etc.
-BUILD_OUTPUT=$(go build ./... 2>&1) || true
+if ! require_go; then
+    echo -e "  ${RED}✗${NC} Go toolchain missing"
+    ERRORS=$((ERRORS + 1))
+    BUILD_OUTPUT=""
+else
+    # Quick build to catch unused imports, undeclared names, etc.
+    BUILD_OUTPUT=$(go build ./... 2>&1) || true
+fi
 
 if [ -n "$BUILD_OUTPUT" ]; then
     # Check for specific error patterns
@@ -112,7 +120,7 @@ if [ -n "$BUILD_OUTPUT" ]; then
         done
         ERRORS=$((ERRORS + 1))
     fi
-else
+elif command -v go >/dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} Build successful"
 fi
 echo ""

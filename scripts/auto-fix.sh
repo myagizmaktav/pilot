@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,6 +29,10 @@ echo ""
 
 # 1. Run go fmt
 echo "Running go fmt..."
+if ! require_go; then
+    exit 1
+fi
+
 FMT_OUTPUT=$(go fmt ./... 2>&1)
 if [ -n "$FMT_OUTPUT" ]; then
     echo -e "  ${GREEN}✓${NC} Formatted files:"

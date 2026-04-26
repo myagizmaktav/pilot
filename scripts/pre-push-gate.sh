@@ -8,6 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Shared toolchain checks
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -84,7 +87,9 @@ run_check_warn() {
 
 # 1. BUILD
 echo -e "${BLUE}[1/5] Build${NC}"
-if ! run_check "go build" "go build -o /dev/null ./cmd/pilot"; then
+if ! require_go; then
+    FAILURES=$((FAILURES + 1))
+elif ! run_check "go build" "go build -o /dev/null ./cmd/pilot"; then
     FAILURES=$((FAILURES + 1))
 fi
 echo ""
@@ -103,7 +108,9 @@ echo ""
 
 # 3. TEST (short mode for speed)
 echo -e "${BLUE}[3/5] Test (short)${NC}"
-if ! run_check "go test -short" "go test -short -race ./..."; then
+if ! require_go; then
+    FAILURES=$((FAILURES + 1))
+elif ! run_check "go test -short" "go test -short -race ./..."; then
     FAILURES=$((FAILURES + 1))
 fi
 echo ""
