@@ -100,6 +100,31 @@ func TestRunProjectCheckFailsWhenGateMissing(t *testing.T) {
 	}
 }
 
+func TestRunProjectCheckReturnsGateFailure(t *testing.T) {
+	projectPath := t.TempDir()
+	scriptDir := filepath.Join(projectPath, "scripts")
+	if err := os.MkdirAll(scriptDir, 0755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	scriptPath := filepath.Join(scriptDir, "pre-push-gate.sh")
+	script := "#!/bin/sh\nprintf 'gate failed\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stderr bytes.Buffer
+	err := runProjectCheck(context.Background(), projectPath, io.Discard, &stderr)
+	if err == nil {
+		t.Fatal("runProjectCheck() error = nil, want gate failure")
+	}
+	if !strings.Contains(err.Error(), "project validation failed") {
+		t.Fatalf("error = %q, want wrapped gate failure", err)
+	}
+	if got := stderr.String(); !strings.Contains(got, "gate failed") {
+		t.Fatalf("stderr = %q, want gate output", got)
+	}
+}
+
 func restoreCheckTestState(t *testing.T) {
 	t.Helper()
 	oldRunProjectCheck := runProjectCheck
