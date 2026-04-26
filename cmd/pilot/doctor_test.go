@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,8 +78,12 @@ func TestDoctorCommandPrintsRecommendationsForBrokenSetup(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("Execute() error = %v", err)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("Execute() error = nil, want critical failure")
+	}
+	if !errors.Is(err, errDoctorNotReady) {
+		t.Fatalf("Execute() error = %v, want errDoctorNotReady", err)
 	}
 
 	got := out.String()
@@ -94,6 +99,37 @@ func TestDoctorCommandPrintsRecommendationsForBrokenSetup(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDoctorCommandAllowsWarningsWithoutFailing(t *testing.T) {
+	restoreDoctorTestState(t)
+	runHealthChecks = func(cfg *config.Config) *health.HealthReport {
+		return &health.HealthReport{
+			Dependencies: []health.Check{
+				{Name: "git", Status: health.StatusOK, Message: "git version 2.50.0"},
+				{Name: "claude", Status: health.StatusOK, Message: "1.0.0 [active backend]"},
+				{Name: "gh", Status: health.StatusWarning, Message: "not found (PR creation unavailable)", Fix: "brew install gh && gh auth login"},
+			},
+			Config: []health.ConfigCheck{
+				{Name: "projects", Status: health.StatusWarning, Message: "no projects configured", Fix: "add at least one project"},
+			},
+			Features: []health.FeatureStatus{{Name: "github", Status: health.StatusDisabled, Note: "not configured"}},
+		}
+	}
+	cfgFile = writeTempConfig(t)
+
+	cmd := newDoctorCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "✅ Ready to start (2 warning(s))") {
+		t.Fatalf("output missing warning-ready summary:\n%s", got)
 	}
 }
 

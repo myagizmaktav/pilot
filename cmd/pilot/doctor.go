@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -12,12 +13,16 @@ import (
 
 var runHealthChecks = health.RunChecks
 
+var errDoctorNotReady = errors.New("pilot doctor found critical issues")
+
 func newDoctorCmd() *cobra.Command {
 	var verbose bool
 
 	cmd := &cobra.Command{
-		Use:   "doctor",
-		Short: "Check system health and configuration",
+		Use:           "doctor",
+		Short:         "Check system health and configuration",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		Long: `Run health checks on system dependencies, configuration, and features.
 
 Shows what's working, what's missing, and how to fix issues.
@@ -35,8 +40,12 @@ Examples:
 			// Run health checks
 			report := runHealthChecks(cfg)
 			renderDoctorReport(cmd.OutOrStdout(), report, verbose)
+			if report.ReadyToStart() {
+				return nil
+			}
 
-			return nil
+			errors, _ := report.Summary()
+			return fmt.Errorf("%w: %d critical error(s)", errDoctorNotReady, errors)
 		},
 	}
 
