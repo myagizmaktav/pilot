@@ -76,6 +76,31 @@ func TestNewRunnerWithConfig(t *testing.T) {
 	}
 }
 
+func TestSelfReviewTimeout(t *testing.T) {
+	t.Run("opencode uses request timeout", func(t *testing.T) {
+		runner, err := NewRunnerWithConfig(&BackendConfig{
+			Type: BackendTypeOpenCode,
+			OpenCode: &OpenCodeConfig{
+				RequestTimeout: "20m",
+			},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if got := runner.selfReviewTimeout(); got != 20*time.Minute {
+			t.Fatalf("selfReviewTimeout() = %v, want %v", got, 20*time.Minute)
+		}
+	})
+
+	t.Run("non-opencode keeps short review timeout", func(t *testing.T) {
+		runner := NewRunnerWithBackend(&mockSelfReviewBackend{})
+		if got := runner.selfReviewTimeout(); got != 2*time.Minute {
+			t.Fatalf("selfReviewTimeout() = %v, want %v", got, 2*time.Minute)
+		}
+	})
+}
+
 func TestNewRunnerWithConfigInvalid(t *testing.T) {
 	config := &BackendConfig{
 		Type: "invalid-backend",
@@ -2923,19 +2948,19 @@ type mockSelfReviewBackend struct {
 	output string
 }
 
-func (m *mockSelfReviewBackend) Name() string        { return "mock" }
-func (m *mockSelfReviewBackend) IsAvailable() bool    { return true }
+func (m *mockSelfReviewBackend) Name() string      { return "mock" }
+func (m *mockSelfReviewBackend) IsAvailable() bool { return true }
 func (m *mockSelfReviewBackend) Execute(_ context.Context, _ ExecuteOptions) (*BackendResult, error) {
 	return &BackendResult{Success: true, Output: m.output}, nil
 }
 
 // mockSelfReviewExtractor implements SelfReviewExtractor for testing.
 type mockSelfReviewExtractor struct {
-	mu             sync.Mutex
-	extractCalls   int
-	saveCalls      int
-	lastResult     *memory.ExtractionResult
-	extractFunc    func(ctx context.Context, output string, projectPath string) (*memory.ExtractionResult, error)
+	mu           sync.Mutex
+	extractCalls int
+	saveCalls    int
+	lastResult   *memory.ExtractionResult
+	extractFunc  func(ctx context.Context, output string, projectPath string) (*memory.ExtractionResult, error)
 }
 
 func (m *mockSelfReviewExtractor) ExtractFromSelfReview(ctx context.Context, output string, projectPath string) (*memory.ExtractionResult, error) {

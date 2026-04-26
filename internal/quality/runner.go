@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -224,6 +226,9 @@ func (r *Runner) executeCommand(ctx context.Context, gate *Gate) (int, string, e
 	// Use shell to execute command (supports pipes, redirects, etc.)
 	cmd := exec.CommandContext(cmdCtx, "sh", "-c", gate.Command)
 	cmd.Dir = r.projectDir
+	if env := goBootstrapEnv(); env != nil {
+		cmd.Env = env
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -253,6 +258,82 @@ func (r *Runner) executeCommand(ctx context.Context, gate *Gate) (int, string, e
 	}
 
 	return exitCode, output, nil
+}
+
+// Mirror scripts/lib-go.sh for subprocesses that inherit a PATH without Go.
+// This keeps auto-detected `go build ./...` and `make test` gates working in
+// environments where Go lives under ~/.local/go*/bin.
+func goBootstrapEnv() []string {
+	if _, err := exec.LookPath("go"); err == nil {
+		return nil
+	}
+
+	goBinary := findGoBinary()
+	if goBinary == "" {
+		return nil
+	}
+
+	pathValue := filepath.Dir(goBinary)
+	if current := os.Getenv("PATH"); current != "" {
+		pathValue += string(os.PathListSeparator) + current
+	}
+
+	return replaceEnvVar(os.Environ(), "PATH", pathValue)
+}
+
+func findGoBinary() string {
+	if path, err := exec.LookPath("go"); err == nil {
+		return path
+	}
+
+	var candidates []string
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if matches, err := filepath.Glob(filepath.Join(home, ".local", "go*", "bin", "go")); err == nil {
+			candidates = append(candidates, matches...)
+		}
+		candidates = append(candidates, filepath.Join(home, "go", "bin", "go"))
+	}
+	candidates = append(candidates,
+		"/usr/local/go/bin/go",
+		"/usr/lib/go/bin/go",
+	)
+
+	for _, candidate := range candidates {
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0111 != 0
+}
+
+func replaceEnvVar(env []string, key, value string) []string {
+	prefix := key + "="
+	updated := make([]string, 0, len(env)+1)
+	replaced := false
+
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			updated = append(updated, prefix+value)
+			replaced = true
+			continue
+		}
+		updated = append(updated, entry)
+	}
+
+	if !replaced {
+		updated = append(updated, prefix+value)
+	}
+
+	return updated
 }
 
 // parseCoverageOutput extracts coverage percentage from command output

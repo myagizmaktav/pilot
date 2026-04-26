@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,6 +27,21 @@ type OpenCodeBackend struct {
 	httpClient *http.Client
 	serverCmd  *exec.Cmd
 	serverMu   sync.Mutex
+}
+
+type openCodeModelRef struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+}
+
+type openCodeTextPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type openCodeMessagePayload struct {
+	Model interface{}        `json:"model,omitempty"`
+	Parts []openCodeTextPart `json:"parts"`
 }
 
 // NewOpenCodeBackend creates a new OpenCode backend.
@@ -50,7 +66,7 @@ func NewOpenCodeBackend(config *OpenCodeConfig) *OpenCodeBackend {
 		config: config,
 		log:    logging.WithComponent("executor.opencode"),
 		httpClient: &http.Client{
-			Timeout: 10 * time.Minute, // Long timeout for AI operations
+			Timeout: config.EffectiveRequestTimeout(),
 		},
 	}
 }
@@ -200,45 +216,23 @@ func (b *OpenCodeBackend) createSession(ctx context.Context, projectPath string)
 func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opts ExecuteOptions) (*BackendResult, error) {
 	result := &BackendResult{}
 
-	// Build message payload
-	payload := map[string]interface{}{
-		"parts": []map[string]interface{}{
-			{
-				"type": "text",
-				"text": opts.Prompt,
-			},
-		},
-	}
-
-	if b.config.Model != "" {
-		payload["model"] = b.config.Model
-	}
-
-	jsonData, err := json.Marshal(payload)
+	payloads, err := b.buildMessagePayloads(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Use async endpoint for streaming
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/session/%s/message", b.config.ServerURL, sessionID),
-		bytes.NewBuffer(jsonData))
+	resp, err := b.doMessageRequest(ctx, sessionID, payloads[0])
 	if err != nil {
-		return nil, err
+		var messageErr *openCodeMessageError
+		if len(payloads) > 1 && errors.As(err, &messageErr) && shouldRetryOpenCodeMessageLegacy(messageErr.Body) {
+			b.log.Warn("OpenCode message payload rejected, retrying with legacy schema")
+			resp, err = b.doMessageRequest(ctx, sessionID, payloads[1])
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("message failed: %s", string(body))
-	}
 
 	// Check if streaming response
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
@@ -267,6 +261,97 @@ func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opt
 	}
 
 	return result, nil
+}
+
+type openCodeMessageError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *openCodeMessageError) Error() string {
+	return fmt.Sprintf("message failed: %s", e.Body)
+}
+
+func (b *OpenCodeBackend) buildMessagePayloads(opts ExecuteOptions) ([]openCodeMessagePayload, error) {
+	parts := []openCodeTextPart{{Type: "text", Text: opts.Prompt}}
+	modern := openCodeMessagePayload{Parts: parts}
+	legacy := openCodeMessagePayload{Parts: parts}
+
+	modelRef, modelString := b.resolveOpenCodeModel(opts.Model)
+	if modelRef != nil {
+		modern.Model = modelRef
+		legacy.Model = modelString
+		return []openCodeMessagePayload{modern, legacy}, nil
+	}
+	if modelString != "" {
+		modern.Model = modelString
+		return []openCodeMessagePayload{modern}, nil
+	}
+
+	return []openCodeMessagePayload{modern}, nil
+}
+
+func (b *OpenCodeBackend) doMessageRequest(ctx context.Context, sessionID string, payload openCodeMessagePayload) (*http.Response, error) {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("%s/session/%s/message", b.config.ServerURL, sessionID),
+		bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return nil, &openCodeMessageError{StatusCode: resp.StatusCode, Body: string(body)}
+}
+
+func (b *OpenCodeBackend) resolveOpenCodeModel(override string) (*openCodeModelRef, string) {
+	raw := strings.TrimSpace(override)
+	if raw == "" {
+		raw = strings.TrimSpace(b.config.Model)
+	}
+	provider := strings.TrimSpace(b.config.Provider)
+	if raw == "" {
+		return nil, ""
+	}
+
+	if strings.Contains(raw, "/") {
+		parts := strings.SplitN(raw, "/", 2)
+		if parts[0] != "" && parts[1] != "" {
+			return &openCodeModelRef{ProviderID: parts[0], ModelID: parts[1]}, raw
+		}
+	}
+
+	if provider != "" {
+		return &openCodeModelRef{ProviderID: provider, ModelID: raw}, provider + "/" + raw
+	}
+
+	return nil, raw
+}
+
+func shouldRetryOpenCodeMessageLegacy(body string) bool {
+	body = strings.ToLower(body)
+	if strings.Contains(body, `"path":["model"]`) && strings.Contains(body, "expected string") {
+		return true
+	}
+	if strings.Contains(body, `"path":["parts",0,"type"]`) {
+		return true
+	}
+	return false
 }
 
 // parseSSEStream parses Server-Sent Events from OpenCode.
