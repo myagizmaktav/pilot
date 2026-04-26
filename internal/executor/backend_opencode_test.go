@@ -1,6 +1,13 @@
 package executor
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -255,5 +262,90 @@ func TestOpenCodeEventStructs(t *testing.T) {
 	}
 	if event.Usage.InputTokens != 100 {
 		t.Errorf("Usage.InputTokens = %d, want 100", event.Usage.InputTokens)
+	}
+}
+
+func TestOpenCodeBackendResolveOpenCodeModel(t *testing.T) {
+	backend := NewOpenCodeBackend(&OpenCodeConfig{Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	modelRef, modelString := backend.resolveOpenCodeModel("")
+	if modelRef == nil {
+		t.Fatal("expected model ref")
+	}
+	if modelRef.ProviderID != "dokproxy" || modelRef.ModelID != "gpt-5.4" {
+		t.Fatalf("unexpected model ref: %+v", *modelRef)
+	}
+	if modelString != "dokproxy/gpt-5.4" {
+		t.Fatalf("modelString = %q", modelString)
+	}
+}
+
+func TestOpenCodeBackendBuildMessagePayloads(t *testing.T) {
+	backend := NewOpenCodeBackend(&OpenCodeConfig{Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	payloads, err := backend.buildMessagePayloads(ExecuteOptions{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("buildMessagePayloads error = %v", err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want 2", len(payloads))
+	}
+
+	modernJSON, _ := json.Marshal(payloads[0])
+	legacyJSON, _ := json.Marshal(payloads[1])
+	if !strings.Contains(string(modernJSON), `"model":{"providerID":"dokproxy","modelID":"gpt-5.4"}`) {
+		t.Fatalf("modern payload missing model object: %s", string(modernJSON))
+	}
+	if !strings.Contains(string(legacyJSON), `"model":"dokproxy/gpt-5.4"`) {
+		t.Fatalf("legacy payload missing model string: %s", string(legacyJSON))
+	}
+}
+
+func TestOpenCodeBackendSendMessageRetriesLegacyOnSchemaMismatch(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		payload := string(body)
+
+		switch requestCount.Load() {
+		case 1:
+			if !strings.Contains(payload, `"model":{"providerID":"dokproxy","modelID":"gpt-5.4"}`) {
+				t.Fatalf("first payload missing modern model object: %s", payload)
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":[{"expected":"string","path":["model"],"message":"Invalid input: expected string, received object"}]}`))
+		case 2:
+			if !strings.Contains(payload, `"model":"dokproxy/gpt-5.4"`) {
+				t.Fatalf("second payload missing legacy model string: %s", payload)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"output":"ok"}`))
+		default:
+			t.Fatalf("unexpected extra retry")
+		}
+	}))
+	defer server.Close()
+
+	backend := NewOpenCodeBackend(&OpenCodeConfig{ServerURL: server.URL, Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	result, err := backend.sendMessage(context.Background(), "sess-1", ExecuteOptions{Prompt: "hello"})
+	if err != nil {
+		t.Fatalf("sendMessage error = %v", err)
+	}
+	if !result.Success || result.Output != "ok" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("requestCount = %d, want 2", got)
+	}
+}
+
+func TestShouldRetryOpenCodeMessageLegacy(t *testing.T) {
+	if !shouldRetryOpenCodeMessageLegacy(`{"path":["model"],"message":"Invalid input: expected string, received object"}`) {
+		t.Fatal("expected retry for model schema mismatch")
+	}
+	if shouldRetryOpenCodeMessageLegacy(`{"error":"boom"}`) {
+		t.Fatal("unexpected retry for unrelated error")
 	}
 }
