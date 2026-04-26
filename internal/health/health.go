@@ -72,7 +72,7 @@ func RunChecks(cfg *config.Config) *HealthReport {
 	}
 
 	report := &HealthReport{
-		Dependencies: checkDependenciesWithBackend(backendType),
+		Dependencies: checkDependenciesWithBackend(backendType, cfg),
 		Config:       checkConfig(cfg),
 		Features:     checkFeatures(cfg),
 		Projects:     len(cfg.Projects),
@@ -143,11 +143,11 @@ var backends = []backendInfo{
 // checkDependencies checks required system dependencies
 func checkDependencies() []Check {
 	// Use default backend type for backwards compatibility
-	return checkDependenciesWithBackend("claude-code")
+	return checkDependenciesWithBackend("claude-code", nil)
 }
 
 // checkDependenciesWithBackend checks dependencies including backend-aware checks
-func checkDependenciesWithBackend(activeBackendType string) []Check {
+func checkDependenciesWithBackend(activeBackendType string, cfg *config.Config) []Check {
 	checks := []Check{}
 
 	// Check Git first (always required)
@@ -185,7 +185,8 @@ func checkDependenciesWithBackend(activeBackendType string) []Check {
 	// Check all backends (active backend is required, others are optional)
 	for _, backend := range backends {
 		isActive := backend.backendType == activeBackendType
-		version := getCommandVersion(backend.command, backend.versionArgs...)
+		command, versionArgs := resolveBackendCommand(backend, activeBackendType, cfg)
+		version := getCommandVersion(command, versionArgs...)
 
 		if version != "" {
 			message := version
@@ -223,6 +224,37 @@ func checkDependenciesWithBackend(activeBackendType string) []Check {
 	}
 
 	return checks
+}
+
+func resolveBackendCommand(backend backendInfo, activeBackendType string, cfg *config.Config) (string, []string) {
+	command := backend.command
+	versionArgs := backend.versionArgs
+	if cfg == nil || cfg.Executor == nil || backend.backendType != activeBackendType {
+		return command, versionArgs
+	}
+
+	switch activeBackendType {
+	case "claude-code":
+		if cfg.Executor.ClaudeCode != nil && cfg.Executor.ClaudeCode.Command != "" {
+			command = cfg.Executor.ClaudeCode.Command
+		}
+	case "qwen-code":
+		if cfg.Executor.QwenCode != nil && cfg.Executor.QwenCode.Command != "" {
+			command = cfg.Executor.QwenCode.Command
+		}
+	case "opencode":
+		if cfg.Executor.OpenCode != nil && cfg.Executor.OpenCode.ServerCommand != "" {
+			parts := strings.Fields(cfg.Executor.OpenCode.ServerCommand)
+			if len(parts) > 0 {
+				command = parts[0]
+			}
+		}
+		// Modern OpenCode supports both `--version` and `version`. Prefer the
+		// flag form because wrapper scripts often special-case it.
+		versionArgs = []string{"--version"}
+	}
+
+	return command, versionArgs
 }
 
 // checkMacSleep checks if Mac sleep is disabled for always-on operation

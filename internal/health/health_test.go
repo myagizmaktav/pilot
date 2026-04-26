@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/qf-studio/pilot/internal/adapters/slack"
 	"github.com/qf-studio/pilot/internal/adapters/telegram"
 	"github.com/qf-studio/pilot/internal/config"
+	"github.com/qf-studio/pilot/internal/executor"
 	"github.com/qf-studio/pilot/internal/transcription"
 )
 
@@ -694,6 +696,56 @@ func TestCommandExists(t *testing.T) {
 	}
 }
 
+func TestResolveBackendCommand_OpenCodeUsesServerCommandBinaryAndVersionFlag(t *testing.T) {
+	backend := backendInfo{
+		name:        "opencode",
+		backendType: "opencode",
+		command:     "opencode",
+		versionArgs: []string{"version"},
+	}
+	cfg := &config.Config{
+		Executor: &executor.BackendConfig{
+			Type: "opencode",
+			OpenCode: &executor.OpenCodeConfig{
+				ServerCommand: "custom-opencode serve --hostname 127.0.0.1 --port 44096",
+			},
+		},
+	}
+
+	command, versionArgs := resolveBackendCommand(backend, "opencode", cfg)
+	if command != "custom-opencode" {
+		t.Fatalf("command = %q, want custom-opencode", command)
+	}
+	if !reflect.DeepEqual(versionArgs, []string{"--version"}) {
+		t.Fatalf("versionArgs = %#v, want %#v", versionArgs, []string{"--version"})
+	}
+}
+
+func TestResolveBackendCommand_NonActiveBackendKeepsDefaults(t *testing.T) {
+	backend := backendInfo{
+		name:        "opencode",
+		backendType: "opencode",
+		command:     "opencode",
+		versionArgs: []string{"version"},
+	}
+	cfg := &config.Config{
+		Executor: &executor.BackendConfig{
+			Type: "claude-code",
+			OpenCode: &executor.OpenCodeConfig{
+				ServerCommand: "custom-opencode serve",
+			},
+		},
+	}
+
+	command, versionArgs := resolveBackendCommand(backend, "claude-code", cfg)
+	if command != "opencode" {
+		t.Fatalf("command = %q, want opencode", command)
+	}
+	if !reflect.DeepEqual(versionArgs, []string{"version"}) {
+		t.Fatalf("versionArgs = %#v, want %#v", versionArgs, []string{"version"})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -709,10 +761,10 @@ func findCheck(checks []Check, name string) *Check {
 
 func TestCheckConfig_GitHubChecks(t *testing.T) {
 	tests := []struct {
-		name           string
-		cfg            *config.Config
-		wantCheckName  string
-		wantStatus     Status
+		name          string
+		cfg           *config.Config
+		wantCheckName string
+		wantStatus    Status
 	}{
 		{
 			name: "enabled no token no gh auth",
@@ -732,9 +784,9 @@ func TestCheckConfig_GitHubChecks(t *testing.T) {
 			cfg: &config.Config{
 				Adapters: &config.AdaptersConfig{
 					GitHub: &github.Config{
-						Enabled:  true,
-						Token:    "test-gh-token",
-						Polling:  &github.PollingConfig{Enabled: true},
+						Enabled: true,
+						Token:   "test-gh-token",
+						Polling: &github.PollingConfig{Enabled: true},
 					},
 				},
 			},
