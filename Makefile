@@ -159,6 +159,9 @@ auto-fix:
 gate:
 	@./scripts/pre-push-gate.sh
 
+# Standard validation alias
+check: gate
+
 # Release - creates tag, builds, packages, and publishes to GitHub
 # Usage: make release V=0.14.6 NOTES="Release notes here"
 release:

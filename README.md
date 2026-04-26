@@ -441,6 +441,7 @@ pilot patterns search "auth"      # Search by keyword
 make deps        # Install dependencies
 make build       # Build binary
 make test        # Run tests
+make check       # Run full validation gate
 make lint        # Run linter
 make dev         # Development mode with hot reload
 ```
@@ -493,6 +494,7 @@ Contributions welcome. Please open an issue first for major changes.
 
 ```bash
 git checkout -b feature/my-feature
+make check
 make test
 # Submit PR
 ```
