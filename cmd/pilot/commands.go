@@ -307,6 +307,22 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
+func newBranchCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "branch",
+		Short:        "Print current git branch",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			branch, err := executor.NewGitOperations(".").GetCurrentBranch(cmd.Context())
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), branch)
+			return err
+		},
+	}
+}
+
 func newTaskCmd() *cobra.Command {
 	var projectPath string
 	var dryRun bool

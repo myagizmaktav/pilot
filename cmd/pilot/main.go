@@ -28,14 +28,14 @@ import (
 	"github.com/qf-studio/pilot/internal/approval"
 	"github.com/qf-studio/pilot/internal/autopilot"
 	"github.com/qf-studio/pilot/internal/banner"
-	"github.com/qf-studio/pilot/internal/comms"
-	"github.com/qf-studio/pilot/internal/intent"
 	"github.com/qf-studio/pilot/internal/briefs"
 	"github.com/qf-studio/pilot/internal/budget"
+	"github.com/qf-studio/pilot/internal/comms"
 	"github.com/qf-studio/pilot/internal/config"
 	"github.com/qf-studio/pilot/internal/dashboard"
 	"github.com/qf-studio/pilot/internal/executor"
 	"github.com/qf-studio/pilot/internal/gateway"
+	"github.com/qf-studio/pilot/internal/intent"
 	"github.com/qf-studio/pilot/internal/logging"
 	"github.com/qf-studio/pilot/internal/memory"
 	"github.com/qf-studio/pilot/internal/pilot"
@@ -77,6 +77,7 @@ func main() {
 		newStatusCmd(),
 		newInitCmd(),
 		newVersionCmd(),
+		newBranchCmd(),
 		newTaskCmd(),
 		newGitHubCmd(),
 		newBriefCmd(),
@@ -249,7 +250,7 @@ Examples:
 					cfg.Orchestrator.Autopilot = autopilot.DefaultConfig()
 				}
 				cfg.Orchestrator.Autopilot.Enabled = true
-			
+
 				// Use SetActiveEnvironment to validate and resolve environment
 				if err := cfg.Orchestrator.Autopilot.SetActiveEnvironment(envFlag); err != nil {
 					// Show helpful error with available environments
@@ -266,7 +267,7 @@ Examples:
 					return err
 				}
 			}
-			
+
 			// GH-394: Polling mode is the default when any polling adapter is enabled.
 			// Previously, having linear.enabled=true would force gateway mode even when
 			// only using GitHub/Telegram polling. Now polling adapters work independently.
@@ -1097,7 +1098,7 @@ Examples:
 		},
 	}
 
-cmd.Flags().BoolVar(&dashboardMode, "dashboard", false, "Show TUI dashboard for real-time task monitoring")
+	cmd.Flags().BoolVar(&dashboardMode, "dashboard", false, "Show TUI dashboard for real-time task monitoring")
 	cmd.Flags().StringVarP(&projectPath, "project", "p", "", "Project path (default: config default or cwd)")
 	cmd.Flags().BoolVar(&replace, "replace", false, "Kill existing bot instance before starting")
 	cmd.Flags().BoolVar(&noGateway, "no-gateway", false, "Run polling adapters only (no HTTP gateway)")
@@ -2480,51 +2481,51 @@ func runPollingMode(cfg *config.Config, projectPath string, replace, dashboardMo
 			}
 
 			// Show GitLab status (GH-2045)
-		if cfg.Adapters.GitLab != nil && cfg.Adapters.GitLab.Enabled {
-			if cfg.Adapters.GitLab.Polling != nil && cfg.Adapters.GitLab.Polling.Enabled {
-				program.Send(dashboard.AddLog("🦊 GitLab polling active")())
-			} else {
-				program.Send(dashboard.AddLog("🦊 GitLab webhooks enabled")())
+			if cfg.Adapters.GitLab != nil && cfg.Adapters.GitLab.Enabled {
+				if cfg.Adapters.GitLab.Polling != nil && cfg.Adapters.GitLab.Polling.Enabled {
+					program.Send(dashboard.AddLog("🦊 GitLab polling active")())
+				} else {
+					program.Send(dashboard.AddLog("🦊 GitLab webhooks enabled")())
+				}
 			}
-		}
-		// Show Jira status (GH-2045)
-		if cfg.Adapters.Jira != nil && cfg.Adapters.Jira.Enabled {
-			if cfg.Adapters.Jira.Polling != nil && cfg.Adapters.Jira.Polling.Enabled {
-				program.Send(dashboard.AddLog("🎫 Jira polling active")())
-			} else {
-				program.Send(dashboard.AddLog("🎫 Jira webhooks enabled")())
+			// Show Jira status (GH-2045)
+			if cfg.Adapters.Jira != nil && cfg.Adapters.Jira.Enabled {
+				if cfg.Adapters.Jira.Polling != nil && cfg.Adapters.Jira.Polling.Enabled {
+					program.Send(dashboard.AddLog("🎫 Jira polling active")())
+				} else {
+					program.Send(dashboard.AddLog("🎫 Jira webhooks enabled")())
+				}
 			}
-		}
-		// Show Asana status (GH-2045)
-		if cfg.Adapters.Asana != nil && cfg.Adapters.Asana.Enabled {
-			if cfg.Adapters.Asana.Polling != nil && cfg.Adapters.Asana.Polling.Enabled {
-				program.Send(dashboard.AddLog("📋 Asana polling active")())
-			} else {
-				program.Send(dashboard.AddLog("📋 Asana webhooks enabled")())
+			// Show Asana status (GH-2045)
+			if cfg.Adapters.Asana != nil && cfg.Adapters.Asana.Enabled {
+				if cfg.Adapters.Asana.Polling != nil && cfg.Adapters.Asana.Polling.Enabled {
+					program.Send(dashboard.AddLog("📋 Asana polling active")())
+				} else {
+					program.Send(dashboard.AddLog("📋 Asana webhooks enabled")())
+				}
 			}
-		}
-		// Show Azure DevOps status (GH-2045)
-		if cfg.Adapters.AzureDevOps != nil && cfg.Adapters.AzureDevOps.Enabled {
-			if cfg.Adapters.AzureDevOps.Polling != nil && cfg.Adapters.AzureDevOps.Polling.Enabled {
-				program.Send(dashboard.AddLog("🔷 Azure DevOps polling active")())
-			} else {
-				program.Send(dashboard.AddLog("🔷 Azure DevOps webhooks enabled")())
+			// Show Azure DevOps status (GH-2045)
+			if cfg.Adapters.AzureDevOps != nil && cfg.Adapters.AzureDevOps.Enabled {
+				if cfg.Adapters.AzureDevOps.Polling != nil && cfg.Adapters.AzureDevOps.Polling.Enabled {
+					program.Send(dashboard.AddLog("🔷 Azure DevOps polling active")())
+				} else {
+					program.Send(dashboard.AddLog("🔷 Azure DevOps webhooks enabled")())
+				}
 			}
-		}
-		// Show Plane status (GH-2045)
-		if cfg.Adapters.Plane != nil && cfg.Adapters.Plane.Enabled {
-			if cfg.Adapters.Plane.Polling != nil && cfg.Adapters.Plane.Polling.Enabled {
-				program.Send(dashboard.AddLog("✈️  Plane polling active")())
-			} else {
-				program.Send(dashboard.AddLog("✈️  Plane webhooks enabled")())
+			// Show Plane status (GH-2045)
+			if cfg.Adapters.Plane != nil && cfg.Adapters.Plane.Enabled {
+				if cfg.Adapters.Plane.Polling != nil && cfg.Adapters.Plane.Polling.Enabled {
+					program.Send(dashboard.AddLog("✈️  Plane polling active")())
+				} else {
+					program.Send(dashboard.AddLog("✈️  Plane webhooks enabled")())
+				}
 			}
-		}
-		// Show Discord status (GH-2045)
-		if cfg.Adapters.Discord != nil && cfg.Adapters.Discord.Enabled {
-			program.Send(dashboard.AddLog("🎮 Discord gateway enabled")())
-		}
+			// Show Discord status (GH-2045)
+			if cfg.Adapters.Discord != nil && cfg.Adapters.Discord.Enabled {
+				program.Send(dashboard.AddLog("🎮 Discord gateway enabled")())
+			}
 
-		// Check for restart marker (set by hot upgrade)
+			// Check for restart marker (set by hot upgrade)
 			// GH-879: Config is automatically reloaded because syscall.Exec starts a fresh process
 			if os.Getenv("PILOT_RESTARTED") == "1" {
 				prevVersion := os.Getenv("PILOT_PREVIOUS_VERSION")

@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -103,6 +108,77 @@ func TestGitHubRunCommandFlags(t *testing.T) {
 	}
 }
 
+func TestBranchCommandPrintsCurrentBranchOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	runGitCommand(t, tmpDir, "init", "-b", "main")
+	runGitCommand(t, tmpDir, "config", "user.email", "test@example.com")
+	runGitCommand(t, tmpDir, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(tmpDir, "README.md"), []byte("test\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(README.md): %v", err)
+	}
+	runGitCommand(t, tmpDir, "add", "README.md")
+	runGitCommand(t, tmpDir, "commit", "-m", "init")
+	runGitCommand(t, tmpDir, "checkout", "-b", "feature/test-branch")
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(oldWD); chdirErr != nil {
+			t.Fatalf("Chdir restore: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir(tmpDir): %v", err)
+	}
+
+	cmd := newBranchCmd()
+	cmd.SetContext(context.Background())
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if got := stdout.String(); got != "feature/test-branch\n" {
+		t.Fatalf("stdout = %q, want branch name only", got)
+	}
+}
+
+func TestBranchCommandFailsOutsideGitRepo(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	defer func() {
+		if chdirErr := os.Chdir(oldWD); chdirErr != nil {
+			t.Fatalf("Chdir restore: %v", chdirErr)
+		}
+	}()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir(tmpDir): %v", err)
+	}
+
+	cmd := newBranchCmd()
+	cmd.SetContext(context.Background())
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	err = cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error outside git repo")
+	}
+	if !strings.Contains(err.Error(), "failed to get current branch") {
+		t.Fatalf("error = %q, want current branch failure", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+}
+
 // TestFlagParsing verifies flags can be parsed correctly using ParseFlags
 // (not Execute which also validates args)
 func TestFlagParsing(t *testing.T) {
@@ -182,6 +258,16 @@ func TestFlagParsing(t *testing.T) {
 				t.Errorf("ParseFlags() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
 }
 
