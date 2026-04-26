@@ -343,6 +343,54 @@ func TestOpenCodeBackendSendMessageRetriesLegacyOnSchemaMismatch(t *testing.T) {
 	}
 }
 
+func TestOpenCodeBackendSendsProjectDirectoryHeader(t *testing.T) {
+	var sessionHeader string
+	var messageHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/session":
+			sessionHeader = r.Header.Get("X-OpenCode-Directory")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"sess-1"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/session/sess-1/message":
+			messageHeader = r.Header.Get("X-OpenCode-Directory")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"output":"ok"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	backend := NewOpenCodeBackend(&OpenCodeConfig{ServerURL: server.URL, Model: "dokproxy/gpt-5.4", Provider: "dokproxy"})
+	const projectPath = "/config/Desktop/projects/linkedinopenclaw"
+	sessionID, err := backend.createSession(context.Background(), projectPath)
+	if err != nil {
+		t.Fatalf("createSession error = %v", err)
+	}
+	resp, err := backend.doMessageRequest(context.Background(), sessionID, projectPath, openCodeMessagePayload{
+		Parts: []openCodeTextPart{{Type: "text", Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("doMessageRequest error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var result BackendResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode result error = %v", err)
+	}
+	if !result.Success || result.Output != "ok" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	const want = "%2Fconfig%2FDesktop%2Fprojects%2Flinkedinopenclaw"
+	if sessionHeader != want {
+		t.Fatalf("session header = %q, want %q", sessionHeader, want)
+	}
+	if messageHeader != want {
+		t.Fatalf("message header = %q, want %q", messageHeader, want)
+	}
+}
+
 func TestShouldRetryOpenCodeMessageLegacy(t *testing.T) {
 	if !shouldRetryOpenCodeMessageLegacy(`{"path":["model"],"message":"Invalid input: expected string, received object"}`) {
 		t.Fatal("expected retry for model schema mismatch")
