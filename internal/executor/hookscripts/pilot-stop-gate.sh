@@ -4,12 +4,36 @@
 
 set -euo pipefail
 
-cd "$CLAUDE_PROJECT_DIR"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+cd "$PROJECT_DIR"
+
+# Reuse repo Go toolchain bootstrap so hook works even when `go` is off PATH.
+if [ -f "$PROJECT_DIR/scripts/lib-go.sh" ]; then
+    . "$PROJECT_DIR/scripts/lib-go.sh"
+fi
+
+ensure_go() {
+    if command -v go >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v require_go >/dev/null 2>&1; then
+        require_go
+        return $?
+    fi
+
+    echo "Go is not installed or not on PATH. Install Go 1.24+ from https://go.dev/dl/" >&2
+    return 1
+}
 
 echo "🔍 Pilot Stop Gate: Verifying build and tests..."
 
 # Go project
 if [ -f go.mod ]; then
+    if ! ensure_go; then
+        echo "❌ Build failed. Fix compilation errors before finishing." >&2
+        exit 2
+    fi
+
     echo "📦 Running go build..."
     if ! go build ./... 2>&1; then
         echo "❌ Build failed. Fix compilation errors before finishing." >&2
