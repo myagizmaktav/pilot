@@ -75,6 +75,7 @@ func main() {
 		newStartCmd(),
 		newStopCmd(),
 		newStatusCmd(),
+		newCheckCmd(),
 		newInitCmd(),
 		newVersionCmd(),
 		newBranchCmd(),

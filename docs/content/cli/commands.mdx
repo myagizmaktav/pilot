@@ -213,6 +213,32 @@ pilot doctor
 pilot doctor --verbose
 ```
 
+## pilot check
+
+Run repository validation gate.
+
+```bash
+pilot check [flags]
+```
+
+Runs `scripts/pre-push-gate.sh` for target project, so build, lint, tests, secret scan, and integration checks use same gate as local pre-push hooks.
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-p`, `--project` | Project path (default: current directory) |
+
+### Examples
+
+```bash
+# Check current repo
+pilot check
+
+# Check another repo
+pilot check --project ~/src/pilot
+```
+
 ## pilot logs
 
 View task execution logs.

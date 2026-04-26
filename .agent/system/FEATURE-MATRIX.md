@@ -1,6 +1,6 @@
 # Pilot Feature Matrix
 
-**Last Updated:** 2026-04-18 (v2.53.0)
+**Last Updated:** 2026-04-26 (v2.100.1)
 
 ## Legend
 
@@ -182,6 +182,7 @@
 | Test gates | ✅ | quality | - | `quality.gates[].type=test` | Run test commands |
 | Lint gates | ✅ | quality | - | `quality.gates[].type=lint` | Run lint commands |
 | Build gates | ✅ | quality | - | `quality.gates[].type=build` | Compile check |
+| Repo validation CLI | ✅ | main | `pilot check` | - | Run `scripts/pre-push-gate.sh` for current repo from CLI (v2.100.1, GH-1) |
 | Retry on failure | ✅ | quality | - | `quality.max_retries` | Auto-retry with feedback |
 
 ## Memory & Learning
