@@ -186,11 +186,11 @@ func TestFindRelevantSOPs(t *testing.T) {
 
 	// Create test SOP files
 	testFiles := map[string]string{
-		"debugging/sqlite-busy.md":        "SQLite debugging guide",
-		"integrations/github-api.md":      "GitHub API integration",
-		"integrations/telegram-bot.md":    "Telegram bot setup",
-		"development/testing-guide.md":    "Testing guidelines",
-		"database-migrations.md":          "Database migration SOP",
+		"debugging/sqlite-busy.md":     "SQLite debugging guide",
+		"integrations/github-api.md":   "GitHub API integration",
+		"integrations/telegram-bot.md": "Telegram bot setup",
+		"development/testing-guide.md": "Testing guidelines",
+		"database-migrations.md":       "Database migration SOP",
 	}
 
 	for filePath, content := range testFiles {
@@ -997,6 +997,50 @@ func TestBuildPromptNoNavigator(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Regular development task") {
 		t.Error("Should contain task description")
+	}
+}
+
+func TestBuildPromptSkipsNavigatorForOpenCodeBackend(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "pilot-test-opencode-no-nav")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	agentDir := filepath.Join(tempDir, ".agent")
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		t.Fatalf("Failed to create .agent dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "DEVELOPMENT-README.md"), []byte("# Test\n\n### Key Components\n- test"), 0644); err != nil {
+		t.Fatalf("Failed to write README: %v", err)
+	}
+
+	runner := NewRunner()
+	runner.config = &BackendConfig{Type: BackendTypeOpenCode}
+	task := &Task{
+		ID:          "GH-3",
+		Title:       "Fix LinkedIn calendar post publishing",
+		Description: "Implement direct code fix without planner artifacts",
+		ProjectPath: tempDir,
+		Branch:      "pilot/GH-3",
+	}
+
+	prompt := runner.BuildPrompt(task, tempDir)
+
+	if strings.Contains(prompt, "## Project Context") {
+		t.Error("OpenCode prompt should skip Navigator project context")
+	}
+	if strings.Contains(prompt, "## Relevant SOPs") {
+		t.Error("OpenCode prompt should skip Navigator SOP hints")
+	}
+	if strings.Contains(prompt, "## Pre-Commit Verification") {
+		t.Error("OpenCode prompt should skip Navigator pre-commit checklist")
+	}
+	if strings.Contains(prompt, "pilot-signal") {
+		t.Error("OpenCode prompt should skip Navigator autonomous workflow signals")
+	}
+	if !strings.Contains(prompt, "## Constraints") {
+		t.Error("OpenCode prompt should fall back to direct execution constraints")
 	}
 }
 

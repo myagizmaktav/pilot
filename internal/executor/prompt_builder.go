@@ -106,6 +106,9 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) (prompt string) {
 	// Skip Navigator for trivial tasks even if .agent/ exists (GH-216)
 	// This reduces overhead for typos, logging, comments, renames, etc.
 	useNavigator := hasNavigator && !complexity.ShouldSkipNavigator()
+	if useNavigator && r.config != nil && r.config.Type == BackendTypeOpenCode {
+		useNavigator = false
+	}
 
 	// GH-2332: escape hatch — when claude_code.disable_navigator_for_epic is
 	// set, strip Navigator context for COMPLEX/EPIC tasks. The heavy Navigator
