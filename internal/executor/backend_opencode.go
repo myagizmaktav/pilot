@@ -646,6 +646,10 @@ func (b *OpenCodeBackend) mapResponsePart(part openCodeResponsePart, raw string)
 			return []BackendEvent{{Type: EventTypeError, Raw: raw, ToolName: part.Tool, Message: part.State.Output, IsError: true}}
 		}
 	case "step-finish":
+		if part.Reason == "tool-calls" {
+			return []BackendEvent{{Type: EventTypeProgress, Raw: raw, Message: "OpenCode step scheduled tool calls"}}
+		}
+
 		event := BackendEvent{Type: EventTypeResult, Raw: raw}
 		if part.Tokens != nil {
 			event.TokensInput = part.Tokens.Input

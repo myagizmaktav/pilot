@@ -795,6 +795,23 @@ func TestOpenCodeBackendParseGlobalEventBareMessagePartUpdated(t *testing.T) {
 	}
 }
 
+func TestOpenCodeBackendParseGlobalEventStepFinishToolCallsIsNotTerminal(t *testing.T) {
+	backend := NewOpenCodeBackend(nil)
+	events, done, err := backend.parseGlobalEvent(`{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"id":"part-2","sessionID":"sess-1","messageID":"msg-1","type":"step-finish","reason":"tool-calls","tokens":{"input":10,"output":2,"reasoning":0,"cache":{"read":0,"write":0}}}}}`, "/tmp/project", "sess-1")
+	if err != nil {
+		t.Fatalf("parseGlobalEvent error = %v", err)
+	}
+	if done {
+		t.Fatal("done = true, want false")
+	}
+	if len(events) != 1 {
+		t.Fatalf("len(events) = %d, want 1", len(events))
+	}
+	if events[0].Type != EventTypeProgress {
+		t.Fatalf("event.Type = %q, want %q", events[0].Type, EventTypeProgress)
+	}
+}
+
 func mustReadBody(t *testing.T, r *http.Request) []byte {
 	t.Helper()
 	body, err := io.ReadAll(r.Body)
