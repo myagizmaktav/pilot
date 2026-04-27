@@ -567,6 +567,7 @@ func TestOpenCodeBackendSendMessagePayloadShape(t *testing.T) {
 func TestOpenCodeBackendSendsProjectDirectoryHeader(t *testing.T) {
 	var sessionHeader string
 	var messageHeader string
+	var messageAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/global/health":
@@ -577,6 +578,7 @@ func TestOpenCodeBackendSendsProjectDirectoryHeader(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"sess-1"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/session/sess-1/message":
 			messageHeader = r.Header.Get("X-OpenCode-Directory")
+			messageAccept = r.Header.Get("Accept")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"info":{"id":"msg_1","role":"assistant","sessionID":"sess-1","providerID":"anthropic","modelID":"claude-sonnet-4","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}}},"parts":[{"type":"text","text":"ok"}]}`))
 		default:
@@ -603,6 +605,9 @@ func TestOpenCodeBackendSendsProjectDirectoryHeader(t *testing.T) {
 	}
 	if messageHeader != want {
 		t.Fatalf("message header = %q, want %q", messageHeader, want)
+	}
+	if messageAccept != "" {
+		t.Fatalf("message Accept header = %q, want empty", messageAccept)
 	}
 }
 

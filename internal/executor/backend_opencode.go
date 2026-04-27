@@ -319,7 +319,6 @@ func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opt
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
 	if opts.ProjectPath != "" {
 		req.Header.Set("X-OpenCode-Directory", url.QueryEscape(opts.ProjectPath))
 	}
