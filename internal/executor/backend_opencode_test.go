@@ -676,7 +676,7 @@ func TestOpenCodeBackendCreateSessionFallsBackToLegacyPayload(t *testing.T) {
 	}
 }
 
-func TestOpenCodeBackendSendMessageModernPromptAsync(t *testing.T) {
+func TestOpenCodeBackendSendMessageFallsBackToModernPromptAsync(t *testing.T) {
 	projectPath := "/tmp/project"
 	promptCalled := make(chan struct{})
 	eventSubscribed := make(chan struct{})
@@ -714,8 +714,11 @@ func TestOpenCodeBackendSendMessageModernPromptAsync(t *testing.T) {
 			close(promptCalled)
 			w.WriteHeader(http.StatusNoContent)
 		case "/session/sess-1/message":
+			if got := r.URL.Query().Get("directory"); got != projectPath {
+				t.Fatalf("message directory = %q, want %q", got, projectPath)
+			}
 			messageCalls.Add(1)
-			http.Error(w, "legacy path should not be called", http.StatusInternalServerError)
+			http.Error(w, "message api unavailable", http.StatusInternalServerError)
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -739,8 +742,8 @@ func TestOpenCodeBackendSendMessageModernPromptAsync(t *testing.T) {
 	if result.TokensInput != 10 || result.TokensOutput != 2 {
 		t.Fatalf("tokens = %d/%d, want 10/2", result.TokensInput, result.TokensOutput)
 	}
-	if messageCalls.Load() != 0 {
-		t.Fatalf("legacy message path called %d times", messageCalls.Load())
+	if messageCalls.Load() != 1 {
+		t.Fatalf("message path called %d times, want 1", messageCalls.Load())
 	}
 	select {
 	case <-eventSubscribed:

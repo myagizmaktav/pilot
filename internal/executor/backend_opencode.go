@@ -300,20 +300,20 @@ func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opt
 
 	payload := b.buildPromptPayload(opts)
 
-	if modernResult, modernErr := b.sendMessageModern(ctx, sessionID, opts, payload); modernErr == nil {
-		return modernResult, nil
-	} else {
-		b.log.Warn("OpenCode modern prompt API failed, falling back to legacy message API", slog.Any("error", modernErr))
-	}
-
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
-	// Use async endpoint for streaming
+	requestURL := fmt.Sprintf("%s/session/%s/message", b.config.ServerURL, sessionID)
+	if opts.ProjectPath != "" {
+		q := url.Values{}
+		q.Set("directory", opts.ProjectPath)
+		requestURL += "?" + q.Encode()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/session/%s/message", b.config.ServerURL, sessionID),
+		requestURL,
 		bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
@@ -326,12 +326,18 @@ func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opt
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
+		if modernResult, modernErr := b.sendMessageModern(ctx, sessionID, opts, payload); modernErr == nil {
+			return modernResult, nil
+		}
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if modernResult, modernErr := b.sendMessageModern(ctx, sessionID, opts, payload); modernErr == nil {
+			return modernResult, nil
+		}
 		return nil, fmt.Errorf("message failed: %s", string(body))
 	}
 
