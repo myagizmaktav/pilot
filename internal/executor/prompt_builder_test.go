@@ -681,8 +681,8 @@ func TestBuildPromptExecutorHeader(t *testing.T) {
 				if !strings.Contains(prompt, "do not refuse") {
 					t.Error("executor header missing 'do not refuse' directive")
 				}
-				if !strings.Contains(prompt, "Navigator + Pilot pipeline") {
-					t.Error("executor header should name the Navigator + Pilot pipeline")
+				if !strings.Contains(prompt, "Pilot's direct execution agent") {
+					t.Error("executor header should identify direct execution mode")
 				}
 			}
 		})
@@ -1041,6 +1041,37 @@ func TestBuildPromptSkipsNavigatorForOpenCodeBackend(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "## Constraints") {
 		t.Error("OpenCode prompt should fall back to direct execution constraints")
+	}
+}
+
+func TestBuildPromptSkipsNavigatorForOpenCodeBackendByBackendName(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "pilot-test-opencode-backend-name")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tempDir) }()
+
+	agentDir := filepath.Join(tempDir, ".agent")
+	if err := os.MkdirAll(agentDir, 0755); err != nil {
+		t.Fatalf("Failed to create .agent dir: %v", err)
+	}
+
+	runner := NewRunnerWithBackend(NewOpenCodeBackend(nil))
+	task := &Task{
+		ID:          "GH-3",
+		Title:       "Fix LinkedIn calendar post publishing",
+		Description: "Implement direct code fix without planner artifacts",
+		ProjectPath: tempDir,
+		Branch:      "pilot/GH-3",
+	}
+
+	prompt := runner.BuildPrompt(task, tempDir)
+
+	if strings.Contains(prompt, "## Project Context") || strings.Contains(prompt, "## Relevant SOPs") || strings.Contains(prompt, "pilot-signal") {
+		t.Error("OpenCode prompt should skip Navigator sections when backend name is opencode")
+	}
+	if !strings.Contains(prompt, "## Constraints") {
+		t.Error("OpenCode prompt should use direct execution path when backend name is opencode")
 	}
 }
 

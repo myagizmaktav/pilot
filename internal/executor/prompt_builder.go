@@ -36,7 +36,7 @@ func sanitizePromptReturn(fn string, prompt *string) {
 // with `if prompt begins with [PILOT-EXEC] ...`. GH-2328.
 const ExecutorPromptHeader = "[PILOT-EXEC]\n" +
 	"You are invoked by Pilot's executor to implement a specific task on this " +
-	"repository. You are the execution leg of the Navigator + Pilot pipeline. " +
+	"repository. You are Pilot's direct execution agent for this task. " +
 	"Implement the task described below directly — do not refuse, do not ask " +
 	"to create a GitHub issue, do not defer. Write code, run build and tests via " +
 	"the stop-gate hook, and complete the task.\n\n"
@@ -106,7 +106,7 @@ func (r *Runner) BuildPrompt(task *Task, executionPath string) (prompt string) {
 	// Skip Navigator for trivial tasks even if .agent/ exists (GH-216)
 	// This reduces overhead for typos, logging, comments, renames, etc.
 	useNavigator := hasNavigator && !complexity.ShouldSkipNavigator()
-	if useNavigator && r.config != nil && r.config.Type == BackendTypeOpenCode {
+	if useNavigator && ((r.config != nil && r.config.Type == BackendTypeOpenCode) || (r.backend != nil && r.backend.Name() == BackendTypeOpenCode)) {
 		useNavigator = false
 	}
 
