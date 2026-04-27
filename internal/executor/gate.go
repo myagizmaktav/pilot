@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -128,8 +129,11 @@ func (g *Gate) RunQuick(ctx context.Context) (*GateResult, error) {
 		Checks: make([]GateCheck, 0),
 	}
 
-	// Just run build
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", "/dev/null", "./...")
+	// Match repo scripts: bootstrap Go from scripts/lib-go.sh when PATH lacks go.
+	cmd := exec.CommandContext(ctx, "go", "build", "./...")
+	if _, err := os.Stat(filepath.Join(g.projectPath, "scripts", "lib-go.sh")); err == nil {
+		cmd = exec.CommandContext(ctx, "bash", "-lc", "source ./scripts/lib-go.sh && require_go && go build ./...")
+	}
 	cmd.Dir = g.projectPath
 
 	var stdout, stderr bytes.Buffer

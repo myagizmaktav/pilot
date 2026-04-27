@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,6 +29,10 @@ echo ""
 
 # 1. Run go fmt
 echo "Running go fmt..."
+if ! require_go; then
+    exit 1
+fi
+
 FMT_OUTPUT=$(go fmt ./... 2>&1)
 if [ -n "$FMT_OUTPUT" ]; then
     echo -e "  ${GREEN}✓${NC} Formatted files:"
@@ -99,14 +105,15 @@ echo ""
 
 # 5. Check for orphan commands and suggest wiring
 echo "Checking command wiring..."
-CMD_FUNCS=$(grep -rh 'func new[A-Z][a-zA-Z]*Cmd\(\)' cmd/pilot/*.go 2>/dev/null | grep -oE 'new[A-Z][a-zA-Z]*Cmd' | sort -u || true)
+CMD_FILES=$(find cmd/pilot -maxdepth 1 -name '*.go' ! -name '*_test.go' 2>/dev/null | sort || true)
+CMD_FUNCS=$(grep -h 'func new[A-Z][a-zA-Z]*Cmd\(\)' $CMD_FILES 2>/dev/null | grep -oE 'new[A-Z][a-zA-Z]*Cmd' | sort -u || true)
 
 ORPHANS=""
 if [ -n "$CMD_FUNCS" ]; then
     for func in $CMD_FUNCS; do
-        USED_IN_ADDCMD=$(grep -rh "AddCommand.*${func}()" cmd/pilot/*.go 2>/dev/null || true)
-        CALLED=$(grep -rh "${func}()" cmd/pilot/*.go 2>/dev/null | grep -v "^func " || true)
-        SUBCOMMAND_USAGE=$(grep -rh "\.AddCommand(${func}()" cmd/pilot/*.go 2>/dev/null || true)
+        USED_IN_ADDCMD=$(grep -h "AddCommand.*${func}()" $CMD_FILES 2>/dev/null || true)
+        CALLED=$(grep -h "${func}()" $CMD_FILES 2>/dev/null | grep -v "^func " || true)
+        SUBCOMMAND_USAGE=$(grep -h "\.AddCommand(${func}()" $CMD_FILES 2>/dev/null || true)
 
         if [ -z "$USED_IN_ADDCMD" ] && [ -z "$CALLED" ] && [ -z "$SUBCOMMAND_USAGE" ]; then
             if [ -z "$ORPHANS" ]; then

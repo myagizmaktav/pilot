@@ -3,7 +3,9 @@ package executor
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,8 +34,8 @@ func TestGenerateClaudeSettings(t *testing.T) {
 	}{
 		{"nil config", nil, 0},
 		{"disabled config", &HooksConfig{Enabled: false}, 0},
-		{"enabled with defaults", &HooksConfig{Enabled: true}, 2},                // Stop + PreToolUse
-		{"enabled with lint", &HooksConfig{Enabled: true, LintOnSave: true}, 3},  // Stop + PreToolUse + PostToolUse
+		{"enabled with defaults", &HooksConfig{Enabled: true}, 2},               // Stop + PreToolUse
+		{"enabled with lint", &HooksConfig{Enabled: true, LintOnSave: true}, 3}, // Stop + PreToolUse + PostToolUse
 		{"all disabled", &HooksConfig{Enabled: true, RunTestsOnStop: boolPtr(false), BlockDestructive: boolPtr(false)}, 0},
 	}
 
@@ -321,6 +323,66 @@ func TestWriteEmbeddedScripts(t *testing.T) {
 	}
 }
 
+func TestEmbeddedHookSourceScriptsAreExecutable(t *testing.T) {
+	for _, script := range []string{"pilot-stop-gate.sh", "pilot-bash-guard.sh", "pilot-lint.sh"} {
+		scriptPath := filepath.Join("hookscripts", script)
+		info, err := os.Stat(scriptPath)
+		if err != nil {
+			t.Fatalf("Stat(%s): %v", scriptPath, err)
+		}
+		if info.Mode()&0111 == 0 {
+			t.Errorf("Script %s is not executable in repo", scriptPath)
+		}
+	}
+}
+
+func TestStopGateBootstrapsGoFromRepoScripts(t *testing.T) {
+	tempDir := t.TempDir()
+	projectDir := filepath.Join(tempDir, "project")
+	scriptDir := filepath.Join(projectDir, "scripts")
+	goBinDir := filepath.Join(tempDir, "fake-go", "bin")
+	realGoPath, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("LookPath(go): %v", err)
+	}
+
+	if err := os.MkdirAll(scriptDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(scriptDir): %v", err)
+	}
+	if err := os.MkdirAll(goBinDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(goBinDir): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(go.mod): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(main.go): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "main_test.go"), []byte("package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(main_test.go): %v", err)
+	}
+	if err := os.Symlink(realGoPath, filepath.Join(goBinDir, "go")); err != nil {
+		t.Fatalf("Symlink(go): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scriptDir, "lib-go.sh"), []byte("#!/bin/bash\nrequire_go() { export PATH=\""+goBinDir+":$PATH\"; }\n"), 0755); err != nil {
+		t.Fatalf("WriteFile(lib-go.sh): %v", err)
+	}
+
+	cmd := exec.Command("bash", filepath.Join("hookscripts", "pilot-stop-gate.sh"))
+	cmd.Dir = "/config/Desktop/projects/pilot/internal/executor"
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PROJECT_DIR="+projectDir,
+		"PATH=/usr/bin:/bin",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pilot-stop-gate.sh failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "✅ Go build and tests passed") {
+		t.Fatalf("expected success output, got:\n%s", out)
+	}
+}
+
 func TestGetBoolPtrValue(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -481,14 +543,14 @@ func TestIsPilotManagedHook(t *testing.T) {
 
 func TestCleanStalePilotHooks(t *testing.T) {
 	type testCase struct {
-		name         string
-		buildJSON    func(scriptDir string) string
-		validate     func(t *testing.T, settingsPath string, scriptDir string)
+		name      string
+		buildJSON func(scriptDir string) string
+		validate  func(t *testing.T, settingsPath string, scriptDir string)
 	}
 
 	tests := []testCase{
 		{
-			name: "no-op when settings file does not exist",
+			name:      "no-op when settings file does not exist",
 			buildJSON: func(scriptDir string) string { return "" },
 			validate: func(t *testing.T, settingsPath string, scriptDir string) {
 				if _, err := os.ReadFile(settingsPath); !os.IsNotExist(err) {

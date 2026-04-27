@@ -11,6 +11,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -29,17 +31,20 @@ echo ""
 # 1. Check for orphan command functions (newXxxCmd not in AddCommand)
 echo "Checking command wiring..."
 
-# Find all newXxxCmd function declarations
-CMD_FUNCS=$(grep -rh 'func new[A-Z][a-zA-Z]*Cmd\(\)' cmd/pilot/*.go 2>/dev/null | grep -oE 'new[A-Z][a-zA-Z]*Cmd' | sort -u || true)
+CMD_FILES=$(find cmd/pilot -maxdepth 1 -name '*.go' ! -name '*_test.go' 2>/dev/null | sort || true)
+
+# Find all production newXxxCmd function declarations.
+# Test helpers often use same naming pattern but are not CLI wiring targets.
+CMD_FUNCS=$(grep -h 'func new[A-Z][a-zA-Z]*Cmd\(\)' $CMD_FILES 2>/dev/null | grep -oE 'new[A-Z][a-zA-Z]*Cmd' | sort -u || true)
 
 if [ -n "$CMD_FUNCS" ]; then
     for func in $CMD_FUNCS; do
         # Check if it's used in AddCommand or called somewhere
-        USED_IN_ADDCMD=$(grep -rh "AddCommand.*${func}()" cmd/pilot/*.go 2>/dev/null || true)
-        CALLED=$(grep -rh "${func}()" cmd/pilot/*.go 2>/dev/null | grep -v "^func " || true)
+        USED_IN_ADDCMD=$(grep -h "AddCommand.*${func}()" $CMD_FILES 2>/dev/null || true)
+        CALLED=$(grep -h "${func}()" $CMD_FILES 2>/dev/null | grep -v "^func " || true)
 
         # For subcommands, check if they're added to a parent
-        SUBCOMMAND_USAGE=$(grep -rh "\.AddCommand(${func}()" cmd/pilot/*.go 2>/dev/null || true)
+        SUBCOMMAND_USAGE=$(grep -h "\.AddCommand(${func}()" $CMD_FILES 2>/dev/null || true)
 
         if [ -z "$USED_IN_ADDCMD" ] && [ -z "$CALLED" ] && [ -z "$SUBCOMMAND_USAGE" ]; then
             echo -e "  ${RED}✗${NC} Orphan command: $func() - not wired to AddCommand()"
@@ -78,8 +83,14 @@ echo ""
 # 3. Check for potential unused imports by running go build with verbose
 echo "Checking for build issues..."
 
-# Quick build to catch unused imports, undeclared names, etc.
-BUILD_OUTPUT=$(go build ./... 2>&1) || true
+if ! require_go; then
+    echo -e "  ${RED}✗${NC} Go toolchain missing"
+    ERRORS=$((ERRORS + 1))
+    BUILD_OUTPUT=""
+else
+    # Quick build to catch unused imports, undeclared names, etc.
+    BUILD_OUTPUT=$(go build ./... 2>&1) || true
+fi
 
 if [ -n "$BUILD_OUTPUT" ]; then
     # Check for specific error patterns
@@ -109,7 +120,7 @@ if [ -n "$BUILD_OUTPUT" ]; then
         done
         ERRORS=$((ERRORS + 1))
     fi
-else
+elif command -v go >/dev/null 2>&1; then
     echo -e "  ${GREEN}✓${NC} Build successful"
 fi
 echo ""

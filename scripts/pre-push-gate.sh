@@ -8,6 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Shared toolchain checks
+. "$SCRIPT_DIR/lib-go.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -84,7 +87,9 @@ run_check_warn() {
 
 # 1. BUILD
 echo -e "${BLUE}[1/5] Build${NC}"
-if ! run_check "go build" "go build -o /dev/null ./cmd/pilot"; then
+if ! require_go; then
+    FAILURES=$((FAILURES + 1))
+elif ! run_check "go build" "go build -o /dev/null ./cmd/pilot"; then
     FAILURES=$((FAILURES + 1))
 fi
 echo ""
@@ -103,7 +108,9 @@ echo ""
 
 # 3. TEST (short mode for speed)
 echo -e "${BLUE}[3/5] Test (short)${NC}"
-if ! run_check "go test -short" "go test -short -race ./..."; then
+if ! require_go; then
+    FAILURES=$((FAILURES + 1))
+elif ! run_check "go test -short" "go test -short -race ./..."; then
     FAILURES=$((FAILURES + 1))
 fi
 echo ""
@@ -129,10 +136,11 @@ else
     # Run inline integration checks if script doesn't exist
     echo -n "  [orphan-commands] "
     # Check for newXxxCmd functions not in AddCommand
+    CMD_FILES=$(find cmd/pilot -maxdepth 1 -name '*.go' ! -name '*_test.go' 2>/dev/null | sort || true)
     ORPHAN_CMDS=0
-    for cmd_func in $(grep -rh 'func new.*Cmd\(\)' cmd/pilot/*.go 2>/dev/null | grep -oE 'new[A-Za-z]+Cmd' || true); do
-        if ! grep -q "AddCommand.*${cmd_func}" cmd/pilot/*.go 2>/dev/null; then
-            if ! grep -q "${cmd_func}()" cmd/pilot/*.go 2>/dev/null; then
+    for cmd_func in $(grep -h 'func new[A-Z][a-zA-Z]*Cmd\(\)' $CMD_FILES 2>/dev/null | grep -oE 'new[A-Z][a-zA-Z]*Cmd' || true); do
+        if ! grep -q "AddCommand.*${cmd_func}" $CMD_FILES 2>/dev/null; then
+            if ! grep -q "${cmd_func}()" $CMD_FILES 2>/dev/null; then
                 ORPHAN_CMDS=$((ORPHAN_CMDS + 1))
             fi
         fi

@@ -24,12 +24,14 @@ type App struct {
 	store      *memory.Store
 	httpClient *http.Client
 	gatewayURL string // e.g. "http://127.0.0.1:9090"
+	projectPath string
 }
 
 // NewApp creates a new App instance.
 func NewApp() *App {
 	return &App{
 		httpClient: &http.Client{Timeout: 2 * time.Second},
+		projectPath: ".",
 	}
 }
 
@@ -51,8 +53,15 @@ func (a *App) startup(ctx context.Context) {
 
 	// Load config to determine gateway address
 	cfg, err := config.Load(config.DefaultConfigPath())
-	if err == nil && cfg.Gateway != nil {
-		a.gatewayURL = fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	if err == nil {
+		if cfg.Gateway != nil {
+			a.gatewayURL = fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+		} else {
+			a.gatewayURL = "http://127.0.0.1:9090"
+		}
+		if len(cfg.Projects) > 0 && cfg.Projects[0] != nil && cfg.Projects[0].Path != "" {
+			a.projectPath = cfg.Projects[0].Path
+		}
 	} else {
 		a.gatewayURL = "http://127.0.0.1:9090"
 	}
@@ -409,11 +418,9 @@ func (a *App) GetGitGraph(limit int) GitGraphData {
 		limit = 100
 	}
 
-	// Resolve project path from config (same pattern as startup()).
-	projectPath := "."
-	cfg, err := config.Load(config.DefaultConfigPath())
-	if err == nil && len(cfg.Projects) > 0 {
-		projectPath = cfg.Projects[0].Path
+	projectPath := a.projectPath
+	if projectPath == "" {
+		projectPath = "."
 	}
 
 	state := dashboard.FetchGitGraph(projectPath, limit)

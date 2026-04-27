@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -191,11 +190,6 @@ func (b *OpenCodeBackend) createSession(ctx context.Context, projectPath string)
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if projectPath != "" {
-		// Decision: attached OpenCode servers select project directory from this
-		// header, not from the legacy JSON payload fields.
-		req.Header.Set("X-OpenCode-Directory", url.QueryEscape(projectPath))
-	}
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
@@ -227,12 +221,12 @@ func (b *OpenCodeBackend) sendMessage(ctx context.Context, sessionID string, opt
 		return nil, err
 	}
 
-	resp, err := b.doMessageRequest(ctx, sessionID, opts.ProjectPath, payloads[0])
+	resp, err := b.doMessageRequest(ctx, sessionID, payloads[0])
 	if err != nil {
 		var messageErr *openCodeMessageError
 		if len(payloads) > 1 && errors.As(err, &messageErr) && shouldRetryOpenCodeMessageLegacy(messageErr.Body) {
 			b.log.Warn("OpenCode message payload rejected, retrying with legacy schema")
-			resp, err = b.doMessageRequest(ctx, sessionID, opts.ProjectPath, payloads[1])
+			resp, err = b.doMessageRequest(ctx, sessionID, payloads[1])
 		}
 	}
 	if err != nil {
@@ -297,7 +291,7 @@ func (b *OpenCodeBackend) buildMessagePayloads(opts ExecuteOptions) ([]openCodeM
 	return []openCodeMessagePayload{modern}, nil
 }
 
-func (b *OpenCodeBackend) doMessageRequest(ctx context.Context, sessionID, projectPath string, payload openCodeMessagePayload) (*http.Response, error) {
+func (b *OpenCodeBackend) doMessageRequest(ctx context.Context, sessionID string, payload openCodeMessagePayload) (*http.Response, error) {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -311,9 +305,6 @@ func (b *OpenCodeBackend) doMessageRequest(ctx context.Context, sessionID, proje
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	if projectPath != "" {
-		req.Header.Set("X-OpenCode-Directory", url.QueryEscape(projectPath))
-	}
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
