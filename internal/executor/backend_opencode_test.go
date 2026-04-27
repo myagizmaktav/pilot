@@ -79,6 +79,13 @@ func TestOpenCodeBackendName(t *testing.T) {
 	}
 }
 
+func TestNewOpenCodeBackendUsesConfiguredRequestTimeout(t *testing.T) {
+	backend := NewOpenCodeBackend(&OpenCodeConfig{RequestTimeout: "20m"})
+	if got := backend.httpClient.Timeout; got != 20*time.Minute {
+		t.Fatalf("httpClient.Timeout = %s, want 20m", got)
+	}
+}
+
 func TestOpenCodeBackendParseOpenCodeEvent(t *testing.T) {
 	backend := NewOpenCodeBackend(nil)
 
