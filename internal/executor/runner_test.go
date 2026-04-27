@@ -56,6 +56,49 @@ func TestNewRunnerWithBackendNil(t *testing.T) {
 	}
 }
 
+func TestHideNavigatorMetadataForOpenCode(t *testing.T) {
+	t.Run("hides agent dir in isolated opencode worktree", func(t *testing.T) {
+		root := t.TempDir()
+		agentDir := filepath.Join(root, ".agent")
+		if err := os.MkdirAll(agentDir, 0755); err != nil {
+			t.Fatalf("mkdir .agent: %v", err)
+		}
+
+		backend := NewOpenCodeBackend(nil)
+		if err := hideNavigatorMetadataForOpenCode(root, filepath.Join(root, "..", "project"), backend, nil, "GH-3"); err != nil {
+			t.Fatalf("hideNavigatorMetadataForOpenCode error = %v", err)
+		}
+		if _, err := os.Stat(agentDir); !os.IsNotExist(err) {
+			t.Fatalf(".agent should be hidden, stat err = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, ".agent.pilot-hidden")); err != nil {
+			t.Fatalf("hidden .agent missing: %v", err)
+		}
+	})
+
+	t.Run("no-op for project root or non-opencode backend", func(t *testing.T) {
+		root := t.TempDir()
+		agentDir := filepath.Join(root, ".agent")
+		if err := os.MkdirAll(agentDir, 0755); err != nil {
+			t.Fatalf("mkdir .agent: %v", err)
+		}
+
+		if err := hideNavigatorMetadataForOpenCode(root, root, NewOpenCodeBackend(nil), nil, "GH-3"); err != nil {
+			t.Fatalf("same-path hide error = %v", err)
+		}
+		if _, err := os.Stat(agentDir); err != nil {
+			t.Fatalf(".agent should remain for same-path case: %v", err)
+		}
+
+		if err := hideNavigatorMetadataForOpenCode(root, filepath.Join(root, "..", "project"), NewClaudeCodeBackend(nil), nil, "GH-3"); err != nil {
+			t.Fatalf("non-opencode hide error = %v", err)
+		}
+		if _, err := os.Stat(agentDir); err != nil {
+			t.Fatalf(".agent should remain for non-opencode case: %v", err)
+		}
+	})
+}
+
 func TestNewRunnerWithConfig(t *testing.T) {
 	config := &BackendConfig{
 		Type: BackendTypeOpenCode,

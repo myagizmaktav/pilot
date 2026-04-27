@@ -549,6 +549,27 @@ func NewRunnerWithConfig(config *BackendConfig) (*Runner, error) {
 	return runner, nil
 }
 
+func hideNavigatorMetadataForOpenCode(executionPath, projectPath string, backend Backend, log *slog.Logger, taskID string) error {
+	if executionPath == projectPath || backend == nil || backend.Name() != BackendTypeOpenCode {
+		return nil
+	}
+	agentPath := filepath.Join(executionPath, ".agent")
+	hiddenAgentPath := filepath.Join(executionPath, ".agent.pilot-hidden")
+	if _, err := os.Stat(agentPath); err != nil {
+		return nil
+	}
+	if err := os.Rename(agentPath, hiddenAgentPath); err != nil {
+		return err
+	}
+	if log != nil {
+		log.Info("Hidden .agent metadata for OpenCode worktree",
+			slog.String("task_id", taskID),
+			slog.String("path", hiddenAgentPath),
+		)
+	}
+	return nil
+}
+
 // Config returns the runner's backend configuration.
 func (r *Runner) Config() *BackendConfig {
 	return r.config
@@ -1443,6 +1464,10 @@ func (r *Runner) executeWithOptions(ctx context.Context, task *Task, allowWorktr
 			r.reportProgress(task.ID, "Branching", 8, fmt.Sprintf("Created branch %s", task.Branch))
 			r.saveLogEntry(task.ID, "info", "Branch created: "+task.Branch)
 		}
+	}
+
+	if hideErr := hideNavigatorMetadataForOpenCode(executionPath, task.ProjectPath, r.backend, log, task.ID); hideErr != nil {
+		log.Warn("Failed to hide .agent for OpenCode worktree", slog.Any("error", hideErr))
 	}
 
 	// GH-994: Create task documentation if Navigator is present
