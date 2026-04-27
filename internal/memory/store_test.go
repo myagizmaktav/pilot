@@ -72,6 +72,36 @@ func TestExecutionCRUD(t *testing.T) {
 	}
 }
 
+func TestSaveExecutionPreservesCreatedAt(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "pilot-test-*")
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	store, _ := NewStore(tmpDir)
+	defer func() { _ = store.Close() }()
+
+	createdAt := time.Now().Add(-3 * time.Hour).Truncate(time.Second)
+	exec := &Execution{
+		ID:          "exec-created-at",
+		TaskID:      "TASK-CREATED-AT",
+		ProjectPath: "/path/to/project",
+		Status:      "completed",
+		CreatedAt:   createdAt,
+	}
+
+	if err := store.SaveExecution(exec); err != nil {
+		t.Fatalf("SaveExecution failed: %v", err)
+	}
+
+	retrieved, err := store.GetExecution(exec.ID)
+	if err != nil {
+		t.Fatalf("GetExecution failed: %v", err)
+	}
+
+	if !retrieved.CreatedAt.Equal(createdAt) {
+		t.Fatalf("CreatedAt = %v, want %v", retrieved.CreatedAt, createdAt)
+	}
+}
+
 func TestGetRecentExecutions(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "pilot-test-*")
 	defer func() { _ = os.RemoveAll(tmpDir) }()

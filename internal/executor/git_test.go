@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -392,6 +393,72 @@ func TestSwitchToDefaultBranchAndPull_NewBranchFromMain(t *testing.T) {
 	}
 }
 
+func TestCreateBranch_RecoversFromOrphanedCherryPickSequencer(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "pilot-git-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	ctx := context.Background()
+	initGitTestRepo(t, ctx, tmpDir)
+
+	git := NewGitOperations(tmpDir)
+	createOrphanedCherryPickState(t, ctx, tmpDir)
+
+	if err := git.CreateBranch(ctx, "recover-branch"); err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	currentBranch, _ := git.GetCurrentBranch(ctx)
+	if currentBranch != "recover-branch" {
+		t.Errorf("current branch = %q, want recover-branch", currentBranch)
+	}
+
+	assertNoCherryPickInProgress(t, ctx, tmpDir)
+}
+
+func TestSwitchBranch_RecoversFromOrphanedCherryPickSequencer(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "pilot-git-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	ctx := context.Background()
+	initGitTestRepo(t, ctx, tmpDir)
+
+	git := NewGitOperations(tmpDir)
+	defaultBranch, err := git.GetCurrentBranch(ctx)
+	if err != nil {
+		t.Fatalf("GetCurrentBranch failed: %v", err)
+	}
+	if err := git.CreateBranch(ctx, "feature"); err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	createOrphanedCherryPickState(t, ctx, tmpDir)
+
+	if err := git.SwitchBranch(ctx, defaultBranch); err != nil {
+		t.Fatalf("SwitchBranch failed: %v", err)
+	}
+
+	currentBranch, _ := git.GetCurrentBranch(ctx)
+	if currentBranch != defaultBranch {
+		t.Errorf("current branch = %q, want %q", currentBranch, defaultBranch)
+	}
+
+	assertNoCherryPickInProgress(t, ctx, tmpDir)
+}
+
 func TestCountNewCommits(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -456,6 +523,77 @@ func TestCountNewCommits(t *testing.T) {
 			t.Errorf("count = %d, want 3", count)
 		}
 	})
+}
+
+func initGitTestRepo(t *testing.T, ctx context.Context, repoPath string) {
+	t.Helper()
+
+	if err := exec.CommandContext(ctx, "git", "-C", repoPath, "init").Run(); err != nil {
+		t.Fatalf("failed to init git repo: %v", err)
+	}
+	_ = exec.CommandContext(ctx, "git", "-C", repoPath, "config", "user.email", "test@test.com").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", repoPath, "config", "user.name", "Test User").Run()
+
+	testFile := filepath.Join(repoPath, "test.txt")
+	if err := os.WriteFile(testFile, []byte("initial"), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	_ = exec.CommandContext(ctx, "git", "-C", repoPath, "add", ".").Run()
+	_ = exec.CommandContext(ctx, "git", "-C", repoPath, "commit", "-m", "initial").Run()
+}
+
+func createOrphanedCherryPickState(t *testing.T, ctx context.Context, repoPath string) {
+	t.Helper()
+
+	gitDir := mustGitDir(t, ctx, repoPath)
+	shaCmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "HEAD")
+	shaOutput, err := shaCmd.Output()
+	if err != nil {
+		t.Fatalf("failed to get HEAD SHA: %v", err)
+	}
+	sha := strings.TrimSpace(string(shaOutput))
+
+	sequencerDir := filepath.Join(gitDir, "sequencer")
+	if err := os.MkdirAll(sequencerDir, 0755); err != nil {
+		t.Fatalf("failed to create sequencer dir: %v", err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(sequencerDir, "head"):         sha + "\n",
+		filepath.Join(sequencerDir, "abort-safety"): sha + "\n",
+		filepath.Join(sequencerDir, "todo"):         "pick deadbeef test\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", path, err)
+		}
+	}
+}
+
+func mustGitDir(t *testing.T, ctx context.Context, repoPath string) string {
+	t.Helper()
+
+	gitDirCmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--git-dir")
+	gitDirOutput, err := gitDirCmd.Output()
+	if err != nil {
+		t.Fatalf("failed to get git dir: %v", err)
+	}
+	gitDir := strings.TrimSpace(string(gitDirOutput))
+	if filepath.IsAbs(gitDir) {
+		return gitDir
+	}
+	return filepath.Join(repoPath, gitDir)
+}
+
+func assertNoCherryPickInProgress(t *testing.T, ctx context.Context, repoPath string) {
+	t.Helper()
+
+	statusCmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status")
+	statusOutput, err := statusCmd.Output()
+	if err != nil {
+		t.Fatalf("git status failed: %v", err)
+	}
+	if strings.Contains(string(statusOutput), "Cherry-pick currently in progress.") {
+		t.Fatalf("git status still reports cherry-pick in progress:\n%s", statusOutput)
+	}
 }
 
 func TestExtractPRURL(t *testing.T) {

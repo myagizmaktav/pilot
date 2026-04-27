@@ -3,7 +3,9 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -17,11 +19,83 @@ func NewGitOperations(projectPath string) *GitOperations {
 	return &GitOperations{projectPath: projectPath}
 }
 
+func (g *GitOperations) runGit(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = g.projectPath
+	return cmd.CombinedOutput()
+}
+
+func (g *GitOperations) runBranchCommand(ctx context.Context, args ...string) ([]byte, error) {
+	if _, err := g.clearOrphanedCherryPickState(ctx); err != nil {
+		return nil, fmt.Errorf("orphaned cherry-pick recovery failed: %w", err)
+	}
+
+	output, err := g.runGit(ctx, args...)
+	if err == nil {
+		return output, nil
+	}
+
+	if !strings.Contains(string(output), "cherry-picking") {
+		return output, err
+	}
+
+	recovered, recoverErr := g.clearOrphanedCherryPickState(ctx)
+	if recoverErr != nil || !recovered {
+		if recoverErr != nil {
+			return output, fmt.Errorf("orphaned cherry-pick recovery failed: %w", recoverErr)
+		}
+		return output, err
+	}
+
+	return g.runGit(ctx, args...)
+}
+
+func (g *GitOperations) clearOrphanedCherryPickState(ctx context.Context) (bool, error) {
+	gitDir, err := g.getGitDir(ctx)
+	if err != nil {
+		return false, fmt.Errorf("resolve git dir: %w", err)
+	}
+
+	sequencerTodo := filepath.Join(gitDir, "sequencer", "todo")
+	if _, err := os.Stat(sequencerTodo); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %s: %w", sequencerTodo, err)
+	}
+
+	headCmd := exec.CommandContext(ctx, "git", "rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD")
+	headCmd.Dir = g.projectPath
+	if err := headCmd.Run(); err == nil {
+		return false, nil
+	}
+
+	if output, err := g.runGit(ctx, "cherry-pick", "--quit"); err != nil {
+		return false, fmt.Errorf("git cherry-pick --quit failed: %w: %s", err, output)
+	}
+
+	return true, nil
+}
+
+func (g *GitOperations) getGitDir(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	cmd.Dir = g.projectPath
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-dir failed: %w", err)
+	}
+
+	gitDir := strings.TrimSpace(string(output))
+	if filepath.IsAbs(gitDir) {
+		return gitDir, nil
+	}
+
+	return filepath.Join(g.projectPath, gitDir), nil
+}
+
 // CreateBranch creates a new branch
 func (g *GitOperations) CreateBranch(ctx context.Context, branchName string) error {
-	cmd := exec.CommandContext(ctx, "git", "checkout", "-b", branchName)
-	cmd.Dir = g.projectPath
-	output, err := cmd.CombinedOutput()
+	output, err := g.runBranchCommand(ctx, "checkout", "-b", branchName)
 	if err != nil {
 		return fmt.Errorf("failed to create branch: %w: %s", err, output)
 	}
@@ -32,9 +106,7 @@ func (g *GitOperations) CreateBranch(ctx context.Context, branchName string) err
 // Uses git checkout -B (uppercase) which force-creates the branch.
 // This is safe when worktree already created the branch (GH-1235).
 func (g *GitOperations) CreateOrResetBranch(ctx context.Context, branchName string) error {
-	cmd := exec.CommandContext(ctx, "git", "checkout", "-B", branchName)
-	cmd.Dir = g.projectPath
-	output, err := cmd.CombinedOutput()
+	output, err := g.runBranchCommand(ctx, "checkout", "-B", branchName)
 	if err != nil {
 		return fmt.Errorf("failed to create/reset branch: %w: %s", err, output)
 	}
@@ -43,9 +115,7 @@ func (g *GitOperations) CreateOrResetBranch(ctx context.Context, branchName stri
 
 // SwitchBranch switches to an existing branch
 func (g *GitOperations) SwitchBranch(ctx context.Context, branchName string) error {
-	cmd := exec.CommandContext(ctx, "git", "checkout", branchName)
-	cmd.Dir = g.projectPath
-	output, err := cmd.CombinedOutput()
+	output, err := g.runBranchCommand(ctx, "checkout", branchName)
 	if err != nil {
 		return fmt.Errorf("failed to switch branch: %w: %s", err, output)
 	}

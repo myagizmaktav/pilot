@@ -2,7 +2,9 @@ package quality
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +126,78 @@ func TestRunner_RunAll_FailingOptionalGate(t *testing.T) {
 	}
 	if !results.AllPassed {
 		t.Error("expected AllPassed to be true for failing optional gate")
+	}
+}
+
+func TestRunner_RunAll_BootstrapsGoToolchain(t *testing.T) {
+	realGoPath := findGoBinary()
+	if realGoPath == "" {
+		t.Skip("go toolchain not installed")
+	}
+
+	tempHome := t.TempDir()
+	projectDir := filepath.Join(tempHome, "project")
+	goBinDir := filepath.Join(tempHome, ".local", "go1.24.2", "bin")
+
+	if err := os.MkdirAll(goBinDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(goBinDir): %v", err)
+	}
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(projectDir): %v", err)
+	}
+	if err := os.Symlink(realGoPath, filepath.Join(goBinDir, "go")); err != nil {
+		t.Fatalf("Symlink(go): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "go.mod"), []byte("module example.com/bootstrap\n\ngo 1.24\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(go.mod): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "sample.go"), []byte("package bootstrap\n\nfunc Add(a, b int) int { return a + b }\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(sample.go): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "sample_test.go"), []byte("package bootstrap\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fatal(\"unexpected sum\")\n\t}\n}\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(sample_test.go): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "Makefile"), []byte("test:\n\tgo test ./...\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(Makefile): %v", err)
+	}
+
+	t.Setenv("HOME", tempHome)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	parallel := false
+	config := &Config{
+		Enabled:  true,
+		Parallel: &parallel,
+		Gates: []*Gate{
+			{
+				Name:     "build",
+				Type:     GateBuild,
+				Command:  "go build ./...",
+				Required: true,
+				Timeout:  30 * time.Second,
+			},
+			{
+				Name:     "test",
+				Type:     GateTest,
+				Command:  "make test",
+				Required: true,
+				Timeout:  30 * time.Second,
+			},
+		},
+	}
+
+	runner := NewRunner(config, projectDir)
+	results, err := runner.RunAll(context.Background(), "bootstrap-go")
+	if err != nil {
+		t.Fatalf("RunAll error: %v", err)
+	}
+	if !results.AllPassed {
+		for _, result := range results.Results {
+			if result.Status != StatusPassed {
+				f := "gate %s failed: %s\n%s"
+				t.Fatalf(f, result.GateName, result.Error, result.Output)
+			}
+		}
+		t.Fatal("expected all gates to pass")
 	}
 }
 

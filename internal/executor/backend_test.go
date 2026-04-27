@@ -148,8 +148,7 @@ func TestOpenCodeConfigEffectiveRequestTimeout(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.config.EffectiveRequestTimeout().String()
-			if got != tt.want {
+			if got := tt.config.EffectiveRequestTimeout().String(); got != tt.want {
 				t.Fatalf("EffectiveRequestTimeout() = %q, want %q", got, tt.want)
 			}
 		})
